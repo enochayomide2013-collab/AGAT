@@ -1,0 +1,6 @@
+{
+  "name": "AGAT - Open-World 4D Action Game",
+  "description": "An immersive 3D open-world action game featuring AGAT City, drivable vehicles, animated NPCs, dynamic weather and day/night cycle, missions, combat, wanted system, and seamless exploration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -225,6 +225,20 @@ export class RadioSystem {
     this.setStation(available[prevIdx]);
   }
 
+  public setVolume(vol: number) {
+    this.volume = Math.max(0, Math.min(1, vol));
+    if (this.masterGain && this.audioCtx) {
+      this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : this.volume, this.audioCtx.currentTime);
+    }
+  }
+
+  public setMuted(muted: boolean) {
+    this.isMuted = muted;
+    if (this.masterGain && this.audioCtx) {
+      this.masterGain.gain.setValueAtTime(muted ? 0 : this.volume, this.audioCtx.currentTime);
+    }
+  }
+
   public getCurrentStationDef(): RadioStationDef {
     return (
       RADIO_STATIONS.find((s) => s.id === this.currentStation) || {
@@ -627,13 +641,6 @@ export class RadioSystem {
     gain.connect(this.musicGain!);
     osc.start(now);
     osc.stop(now + 0.07);
-  }
-
-  public setVolume(vol: number) {
-    this.volume = Math.max(0, Math.min(1, vol));
-    if (this.masterGain && this.audioCtx) {
-      this.masterGain.gain.setValueAtTime(this.isMuted ? 0 : this.volume, this.audioCtx.currentTime);
-    }
   }
 
   public toggleMute() {

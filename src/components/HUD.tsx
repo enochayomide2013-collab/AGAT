@@ -1,8 +1,8 @@
-import React, { useEffect, useRef } from 'react';
-import { Shield, DollarSign, Crosshair, Heart, Navigation, Gauge, CloudSun, CloudRain, ShoppingBag, Timer, Star, Siren, Building2, Sparkles, SprayCan } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Shield, DollarSign, Crosshair, Heart, Navigation, Gauge, CloudSun, CloudRain, ShoppingBag, Timer, Star, Siren, Building2, Sparkles, SprayCan, CheckCircle2, AlertTriangle, Info } from 'lucide-react';
 import { GameEngine } from '../engine/GameEngine';
 import { soundManager } from '../engine/SoundManager';
-import { MiniMap } from './MiniMap';
+import { Minimap } from './Minimap';
 import { RadioPlayer } from './RadioPlayer';
 
 interface HUDProps {
@@ -14,6 +14,28 @@ interface HUDProps {
 
 export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpenShop }) => {
   if (!engine) return null;
+
+  const [notification, setNotification] = useState<{
+    id: number;
+    title: string;
+    subtitle: string;
+    type: 'success' | 'warning' | 'info';
+  } | null>(null);
+
+  useEffect(() => {
+    if (!engine) return;
+    engine.onNotification = (title, subtitle, type) => {
+      setNotification({
+        id: Date.now(),
+        title,
+        subtitle,
+        type,
+      });
+      setTimeout(() => {
+        setNotification((prev) => (prev?.title === title ? null : prev));
+      }, 3500);
+    };
+  }, [engine]);
 
   const playerHealth = engine.playerHealth;
   const playerMoney = engine.playerMoney;
@@ -323,6 +345,34 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
         </div>
       </div>
 
+      {/* FLOATING ACTION NOTIFICATION TOAST */}
+      {notification && (
+        <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 pointer-events-none animate-in fade-in slide-in-from-top-4 duration-300">
+          <div
+            className={`flex items-center gap-3 px-5 py-3 rounded-xl border backdrop-blur-md shadow-2xl ${
+              notification.type === 'success'
+                ? 'bg-emerald-950/90 border-emerald-500/70 shadow-emerald-500/20 text-emerald-300'
+                : notification.type === 'warning'
+                ? 'bg-amber-950/90 border-amber-500/70 shadow-amber-500/20 text-amber-300'
+                : 'bg-sky-950/90 border-sky-500/70 shadow-sky-500/20 text-sky-300'
+            }`}
+          >
+            {notification.type === 'success' && <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0 animate-bounce" />}
+            {notification.type === 'warning' && <AlertTriangle className="w-6 h-6 text-amber-400 shrink-0 animate-pulse" />}
+            {notification.type === 'info' && <Sparkles className="w-6 h-6 text-sky-400 shrink-0" />}
+
+            <div>
+              <div className="text-xs font-black tracking-widest uppercase text-white font-mono">
+                {notification.title}
+              </div>
+              <div className="text-[11px] font-sans font-medium opacity-90">
+                {notification.subtitle}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CENTER INTERACTION PROMPT */}
       <div className="flex flex-col items-center justify-center my-auto">
         {isSprayingAnimation && (
@@ -359,7 +409,7 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
           {playerVehicle && <RadioPlayer />}
 
           <div className="flex items-center gap-2">
-            <MiniMap engine={engine} onOpenFullMap={onOpenMap} />
+            <Minimap engine={engine} onOpenFullMap={onOpenMap} />
           </div>
         </div>
 

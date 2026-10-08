@@ -9,6 +9,7 @@ import { GameOverModal } from './components/GameOverModal';
 import { CharacterCustomizationModal } from './components/CharacterCustomizationModal';
 import { StreetArtModal } from './components/StreetArtModal';
 import { AlleyTagWallDef } from './types/game';
+import { soundManager } from './engine/SoundManager';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -131,6 +132,7 @@ export default function App() {
   }, [isPlaying, isGameOver, isMapOpen, isShopOpen, isCustomizationOpen, isStreetArtOpen, engine]);
 
   const handleStartGame = () => {
+    soundManager.stopLandingMusic(1.5);
     setIsPlaying(true);
     setIsPaused(false);
     if (engine) {
@@ -158,6 +160,7 @@ export default function App() {
     setIsPaused(false);
     setIsMapOpen(false);
     setIsShopOpen(false);
+    soundManager.playLandingMusic();
     if (engine) {
       engine.isPaused = true;
     }

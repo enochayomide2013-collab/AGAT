@@ -86,6 +86,24 @@ export class AudioController {
     }
   }
 
+  public setEngineVolume(volume: number) {
+    if (this.engineGain && this.ctx) {
+      this.engineGain.gain.setTargetAtTime(Math.max(0, Math.min(1, volume)) * 0.8, this.ctx.currentTime, 0.05);
+    }
+  }
+
+  public setWeatherVolume(volume: number) {
+    if (this.weatherGain && this.ctx) {
+      this.weatherGain.gain.setTargetAtTime(Math.max(0, Math.min(1, volume)) * 0.75, this.ctx.currentTime, 0.05);
+    }
+  }
+
+  public setChatterVolume(volume: number) {
+    if (this.chatterGain && this.ctx) {
+      this.chatterGain.gain.setTargetAtTime(Math.max(0, Math.min(1, volume)) * 0.7, this.ctx.currentTime, 0.05);
+    }
+  }
+
   public setMuted(muted: boolean) {
     this.isMuted = muted;
     if (this.masterGain && this.ctx) {

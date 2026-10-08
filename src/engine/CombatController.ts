@@ -306,7 +306,7 @@ export class CombatController {
     rightArm: THREE.Mesh,
     leftArm: THREE.Mesh,
     torso: THREE.Mesh,
-    head: THREE.Mesh
+    head: THREE.Mesh | THREE.Group
   ) {
     const hasWeapon = this.inventory.isWeaponEquipped();
     const activeWeapon = this.inventory.getActiveWeapon();

@@ -1,5 +1,12 @@
 import * as THREE from 'three';
-import { AlleyTagWallDef, CharacterCustomization, GameSaveData, WeatherType } from '../types/game';
+import {
+  AlleyTagWallDef,
+  CharacterCustomization,
+  GameAudioSettings,
+  GameEnvironmentSettings,
+  GameSaveData,
+  WeatherType,
+} from '../types/game';
 import { AudioController, audioController } from './AudioController';
 import { CombatController } from './CombatController';
 import { CombatManager } from './CombatManager';
@@ -14,20 +21,40 @@ import { VehicleManager } from './VehicleManager';
 import { WantedLevel } from './WantedLevel';
 import { WeatherSystem } from './WeatherSystem';
 import { WeaponInventory } from './WeaponInventory';
+import { WildlifeManager } from './WildlifeManager';
 import { WorldBuilder } from './WorldBuilder';
+import { buildCharacterRig, CharacterRig, updateCharacterRigAnimation } from './CharacterRigBuilder';
 
 export const DEFAULT_CHARACTER_CUSTOMIZATION: CharacterCustomization = {
   hairstyle: 'short_fade',
   hairColor: '#111111',
   skinTone: '#d9a07a',
+  eyeColor: '#00f0ff',
+  noseType: 'straight',
+  faceShape: 'angular',
+  eyebrowStyle: 'arched',
+  eyebrowColor: '#111111',
+  noseBridgeWidth: 1.0,
+  noseProjection: 1.0,
+  eyeSpacing: 1.0,
+  eyeDepth: 1.0,
+  earLobeSize: 1.0,
+  jawAngle: 1.0,
+  jawlineDefinition: 1.0,
   facialHair: 'stubble',
   facialHairColor: '#111111',
   eyewear: 'cyber_shades',
   eyewearColor: '#00f0ff',
+  headwear: 'none',
+  headwearColor: '#0f172a',
   bodyType: 'balanced',
+  heightScale: 1.0,
   outfit: 'cyber_leather',
   jacketColor: '#1e293b',
+  pantsType: 'cargo_pants',
   pantsColor: '#334155',
+  shoes: 'high_tops',
+  shoesColor: '#09090b',
 };
 
 export class GameEngine {
@@ -50,8 +77,29 @@ export class GameEngine {
   public audioController: AudioController;
   public interiorManager: InteriorManager;
   public streetArtManager: StreetArtManager;
+  public wildlifeManager: WildlifeManager;
   public radioSystem: RadioSystem = radioSystem;
   public customization: CharacterCustomization = { ...DEFAULT_CHARACTER_CUSTOMIZATION };
+
+  // Audio & Environment User Settings
+  public audioSettings: GameAudioSettings = {
+    masterVolume: 80,
+    musicVolume: 75,
+    sfxVolume: 85,
+    engineVolume: 80,
+    weatherVolume: 75,
+    isMuted: false,
+  };
+
+  public environmentSettings: GameEnvironmentSettings = {
+    weather: 'clear',
+    timeOfDay: 14.0,
+    timeProgression: true,
+    timeSpeedMultiplier: 1.0,
+    fogDensity: 'medium',
+    shadows: 'medium',
+    trafficDensity: 'normal',
+  };
 
   // Lighting & Day/Night
   public dirLight: THREE.DirectionalLight;
@@ -78,9 +126,10 @@ export class GameEngine {
   public wantedTimer: number = 0;
 
   // Player 3D Rig
+  public playerRig: CharacterRig;
   public playerMesh: THREE.Group;
   public playerTorso: THREE.Mesh;
-  public playerHead: THREE.Mesh;
+  public playerHead: THREE.Mesh | THREE.Group;
   public playerLegs: [THREE.Mesh, THREE.Mesh];
   public playerArms: [THREE.Mesh, THREE.Mesh];
   public playerWalkCycle: number = 0;
@@ -109,6 +158,7 @@ export class GameEngine {
   public onToggleShop?: () => void;
   public onToggleCustomization?: () => void;
   public onOpenStreetArt?: (wall: AlleyTagWallDef) => void;
+  public onNotification?: (title: string, subtitle: string, type: 'success' | 'warning' | 'info') => void;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -165,6 +215,16 @@ export class GameEngine {
     this.combatController = new CombatController(this.weaponInventory, this.scene);
     this.combatManager = new CombatManager(this.scene, this.weaponInventory, this.combatController);
     this.missionManager = new MissionManager();
+    this.missionManager.onMissionStateChange = (mission, event) => {
+      if (mission && event === 'completed') {
+        this.playerMoney += mission.reward;
+        this.onNotification?.('MISSION PASSED', `${mission.title} · +$${mission.reward}`, 'success');
+      } else if (mission && event === 'failed') {
+        this.onNotification?.('MISSION FAILED', `${mission.title} · Time Limit Expired`, 'warning');
+      } else if (mission && event === 'started') {
+        this.onNotification?.('MISSION STARTED', `${mission.title} · ${mission.subtitle}`, 'info');
+      }
+    };
     this.shopManager = new ShopManager();
     this.weatherSystem = new WeatherSystem(this.scene, this.worldBuilder, this.vehicleManager, this.dirLight, this.hemiLight);
     this.wantedLevelSystem = new WantedLevel(this.npcManager, this.vehicleManager);
@@ -184,15 +244,20 @@ export class GameEngine {
     this.streetArtManager = new StreetArtManager(this.scene);
     this.streetArtManager.onTagCompleted = (wall, reward) => {
       this.playerMoney += reward;
+      this.onNotification?.('TURF CLAIMED!', `${wall.name} Tagged · +$${reward}`, 'success');
     };
 
+    // Ambient Wildlife System (Parks & AGAT City Outskirts)
+    this.wildlifeManager = new WildlifeManager(this.scene);
+
     // 5. Build Player Character Rig
-    const { group, torso, head, legs, arms } = this.createPlayerRig();
-    this.playerMesh = group;
-    this.playerTorso = torso;
-    this.playerHead = head;
-    this.playerLegs = legs;
-    this.playerArms = arms;
+    const rig = this.createPlayerRig();
+    this.playerRig = rig;
+    this.playerMesh = rig.group;
+    this.playerTorso = rig.torso;
+    this.playerHead = rig.head;
+    this.playerLegs = rig.legs;
+    this.playerArms = rig.arms;
     this.scene.add(this.playerMesh);
 
     // 6. Rain System
@@ -214,165 +279,11 @@ export class GameEngine {
     this.animFrameId = requestAnimationFrame(this.loop);
   }
 
-  private createPlayerRig() {
-    const group = new THREE.Group();
-    group.position.copy(this.playerPos);
-
-    const c = this.customization;
-    const bodyScale = c.bodyType === 'muscular' ? 1.18 : c.bodyType === 'slim' ? 0.88 : 1.0;
-    const armScale = c.bodyType === 'muscular' ? 1.25 : c.bodyType === 'slim' ? 0.85 : 1.0;
-
-    // Torso (outfit jacket / shirt)
-    const torsoMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(c.jacketColor),
-      roughness: c.outfit === 'cyber_leather' ? 0.4 : 0.7,
-      metalness: c.outfit === 'cyber_leather' ? 0.3 : 0.05,
-    });
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55 * bodyScale, 0.75, 0.3 * bodyScale), torsoMat);
-    torso.position.y = 1.15;
-    torso.castShadow = true;
-    group.add(torso);
-
-    // Head (skin tone)
-    const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.skinTone), roughness: 0.75 });
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.35, 0.32), skinMat);
-    head.position.y = 1.72;
-    head.castShadow = true;
-    group.add(head);
-
-    // Hair
-    const hairMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.hairColor), roughness: 0.5 });
-    if (c.hairstyle === 'short_fade') {
-      const h = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.34), hairMat);
-      h.position.y = 1.9;
-      group.add(h);
-    } else if (c.hairstyle === 'buzz') {
-      const h = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.08, 0.33), hairMat);
-      h.position.y = 1.88;
-      group.add(h);
-    } else if (c.hairstyle === 'mohawk') {
-      const h = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.32, 0.36), hairMat);
-      h.position.set(0, 1.98, 0.02);
-      group.add(h);
-    } else if (c.hairstyle === 'pompadour') {
-      const h = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.36), hairMat);
-      h.position.set(0, 1.94, -0.04);
-      group.add(h);
-    } else if (c.hairstyle === 'cyber_ponytail') {
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.34), hairMat);
-      cap.position.y = 1.9;
-      group.add(cap);
-
-      const pony = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.45, 12), hairMat);
-      pony.position.set(0, 1.75, -0.26);
-      pony.rotation.x = -Math.PI / 6;
-      group.add(pony);
-    } else if (c.hairstyle === 'afro') {
-      const h = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.32, 0.44), hairMat);
-      h.position.y = 1.95;
-      group.add(h);
-    } else if (c.hairstyle === 'long_wavy') {
-      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.16, 0.35), hairMat);
-      cap.position.y = 1.9;
-      group.add(cap);
-
-      const leftStrand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.18), hairMat);
-      leftStrand.position.set(-0.18, 1.62, 0.02);
-      group.add(leftStrand);
-
-      const rightStrand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.18), hairMat);
-      rightStrand.position.set(0.18, 1.62, 0.02);
-      group.add(rightStrand);
-    }
-
-    // Facial Hair
-    if (c.facialHair !== 'none') {
-      const beardMat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(c.facialHairColor || c.hairColor),
-        roughness: 0.7,
-      });
-
-      if (c.facialHair === 'stubble') {
-        const stubble = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.14, 0.18), beardMat);
-        stubble.position.set(0, 1.6, 0.1);
-        group.add(stubble);
-      } else if (c.facialHair === 'goatee') {
-        const goatee = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.16), beardMat);
-        goatee.position.set(0, 1.58, 0.12);
-        group.add(goatee);
-      } else if (c.facialHair === 'full_beard') {
-        const beard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.22), beardMat);
-        beard.position.set(0, 1.56, 0.1);
-        group.add(beard);
-      } else if (c.facialHair === 'moustache') {
-        const stache = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.12), beardMat);
-        stache.position.set(0, 1.64, 0.14);
-        group.add(stache);
-      }
-    }
-
-    // Eyewear
-    if (c.eyewear !== 'none') {
-      if (c.eyewear === 'cyber_shades') {
-        const shadeMat = new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.1, metalness: 0.9 });
-        const shades = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.08, 0.12), shadeMat);
-        shades.position.set(0, 1.74, 0.14);
-        group.add(shades);
-      } else if (c.eyewear === 'hud_visor') {
-        const visorMat = new THREE.MeshStandardMaterial({
-          color: new THREE.Color(c.eyewearColor || '#00f0ff'),
-          emissive: new THREE.Color(c.eyewearColor || '#00f0ff'),
-          emissiveIntensity: 0.7,
-          roughness: 0.1,
-        });
-        const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.09, 0.14), visorMat);
-        visor.position.set(0, 1.74, 0.14);
-        group.add(visor);
-      } else if (c.eyewear === 'cyber_eye') {
-        const eyeMat = new THREE.MeshStandardMaterial({
-          color: 0x00f0ff,
-          emissive: 0x00f0ff,
-          emissiveIntensity: 0.9,
-        });
-        const eye = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.08, 12), eyeMat);
-        eye.rotation.x = Math.PI / 2;
-        eye.position.set(0.09, 1.74, 0.16);
-        group.add(eye);
-      }
-    }
-
-    // Legs
-    const pantsMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.pantsColor), roughness: 0.8 });
-    const legGeo = new THREE.BoxGeometry(0.2 * bodyScale, 0.75, 0.22 * bodyScale);
-    const leftLeg = new THREE.Mesh(legGeo, pantsMat);
-    leftLeg.position.set(-0.14 * bodyScale, 0.38, 0);
-    leftLeg.castShadow = true;
-    group.add(leftLeg);
-
-    const rightLeg = new THREE.Mesh(legGeo, pantsMat);
-    rightLeg.position.set(0.14 * bodyScale, 0.38, 0);
-    rightLeg.castShadow = true;
-    group.add(rightLeg);
-
-    // Arms
-    const armGeo = new THREE.BoxGeometry(0.16 * armScale, 0.65, 0.18 * armScale);
-    const leftArm = new THREE.Mesh(armGeo, torsoMat);
-    leftArm.position.set(-0.35 * bodyScale, 1.1, 0);
-    leftArm.castShadow = true;
-    group.add(leftArm);
-
-    const rightArm = new THREE.Mesh(armGeo, torsoMat);
-    rightArm.position.set(0.35 * bodyScale, 1.1, 0);
-    rightArm.castShadow = true;
-    group.add(rightArm);
-
-    return {
-      group,
-      torso,
-      head,
-      legs: [leftLeg, rightLeg] as [THREE.Mesh, THREE.Mesh],
-      arms: [leftArm, rightArm] as [THREE.Mesh, THREE.Mesh],
-    };
+  private createPlayerRig(): CharacterRig {
+    const rig = buildCharacterRig(this.customization);
+    rig.group.position.copy(this.playerPos);
+    this.playerRig = rig;
+    return rig;
   }
 
   public updatePlayerCustomization(cust: CharacterCustomization) {
@@ -382,17 +293,108 @@ export class GameEngine {
       this.scene.remove(this.playerMesh);
     }
 
-    const { group, torso, head, legs, arms } = this.createPlayerRig();
-    this.playerMesh = group;
-    this.playerTorso = torso;
-    this.playerHead = head;
-    this.playerLegs = legs;
-    this.playerArms = arms;
+    const rig = this.createPlayerRig();
+    this.playerRig = rig;
+    this.playerMesh = rig.group;
+    this.playerTorso = rig.torso;
+    this.playerHead = rig.head;
+    this.playerLegs = rig.legs;
+    this.playerArms = rig.arms;
 
     this.scene.add(this.playerMesh);
     this.playerMesh.position.copy(this.playerPos);
     this.playerMesh.rotation.y = this.playerHeading;
     this.playerMesh.visible = oldVisible;
+  }
+
+  // --- ENVIRONMENT & AUDIO SETTINGS HELPERS ---
+  public setWeather(w: WeatherType) {
+    this.weather = w;
+    this.environmentSettings.weather = w;
+    this.weatherSystem.setWeather(w);
+  }
+
+  public setTimeOfDay(hour: number) {
+    this.timeOfDay = Math.max(0, Math.min(24, hour));
+    this.environmentSettings.timeOfDay = this.timeOfDay;
+    this.updateAtmosphere();
+  }
+
+  public setFogDensity(density: 'off' | 'low' | 'medium' | 'high') {
+    this.environmentSettings.fogDensity = density;
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      if (density === 'off') this.scene.fog.density = 0;
+      else if (density === 'low') this.scene.fog.density = 0.0015;
+      else if (density === 'medium') this.scene.fog.density = 0.0035;
+      else if (density === 'high') this.scene.fog.density = 0.0075;
+    }
+  }
+
+  public setShadowQuality(quality: 'off' | 'medium' | 'high') {
+    this.environmentSettings.shadows = quality;
+    if (quality === 'off') {
+      this.renderer.shadowMap.enabled = false;
+      this.dirLight.castShadow = false;
+    } else if (quality === 'medium') {
+      this.renderer.shadowMap.enabled = true;
+      this.dirLight.castShadow = true;
+      this.dirLight.shadow.mapSize.width = 1024;
+      this.dirLight.shadow.mapSize.height = 1024;
+    } else if (quality === 'high') {
+      this.renderer.shadowMap.enabled = true;
+      this.dirLight.castShadow = true;
+      this.dirLight.shadow.mapSize.width = 2048;
+      this.dirLight.shadow.mapSize.height = 2048;
+    }
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  public applyAudioSettings(settings: Partial<GameAudioSettings>) {
+    this.audioSettings = { ...this.audioSettings, ...settings };
+    if (settings.masterVolume !== undefined) {
+      soundManager.setVolume(this.audioSettings.masterVolume / 100);
+      this.audioController.setVolume(this.audioSettings.masterVolume / 100);
+    }
+    if (settings.musicVolume !== undefined) {
+      soundManager.setMusicVolume(this.audioSettings.musicVolume / 100);
+      this.radioSystem.setVolume(this.audioSettings.musicVolume / 100);
+    }
+    if (settings.sfxVolume !== undefined) {
+      soundManager.setSFXVolume(this.audioSettings.sfxVolume / 100);
+    }
+    if (settings.engineVolume !== undefined) {
+      this.audioController.setEngineVolume(this.audioSettings.engineVolume / 100);
+    }
+    if (settings.weatherVolume !== undefined) {
+      this.audioController.setWeatherVolume(this.audioSettings.weatherVolume / 100);
+    }
+    if (settings.isMuted !== undefined) {
+      soundManager.setMuted(this.audioSettings.isMuted);
+      this.audioController.setMuted(this.audioSettings.isMuted);
+      this.radioSystem.setMuted(this.audioSettings.isMuted);
+    }
+  }
+
+  public applyEnvironmentSettings(settings: Partial<GameEnvironmentSettings>) {
+    this.environmentSettings = { ...this.environmentSettings, ...settings };
+    if (settings.weather !== undefined) {
+      this.setWeather(settings.weather);
+    }
+    if (settings.timeOfDay !== undefined) {
+      this.setTimeOfDay(settings.timeOfDay);
+    }
+    if (settings.timeSpeedMultiplier !== undefined) {
+      this.daySpeed = 0.05 * settings.timeSpeedMultiplier;
+    }
+    if (settings.timeProgression !== undefined) {
+      this.daySpeed = settings.timeProgression ? (0.05 * (settings.timeSpeedMultiplier || 1)) : 0;
+    }
+    if (settings.fogDensity !== undefined) {
+      this.setFogDensity(settings.fogDensity);
+    }
+    if (settings.shadows !== undefined) {
+      this.setShadowQuality(settings.shadows);
+    }
   }
 
   private initRainParticles() {
@@ -707,10 +709,11 @@ export class GameEngine {
       if (hitNPC) {
         hitNPC.data.health -= hitResult.damageDealt;
         if (hitNPC.data.health <= 0) {
-          hitNPC.isDefeated = true;
-          hitNPC.data.state = 'defeated';
-          hitNPC.mesh.rotation.x = Math.PI / 2;
-          hitNPC.mesh.position.y = 0.2;
+          const impactDir = hitResult.point
+            ? hitResult.point.clone().sub(origin).normalize().multiplyScalar(5.5)
+            : new THREE.Vector3(0, 2.5, 0);
+          impactDir.y = 2.2 + Math.random() * 1.5;
+          this.npcManager.triggerRagdoll(hitNPC, impactDir);
 
           // Check mission progression for eliminating hostile targets
           this.missionManager.checkPlayerProgress(
@@ -747,8 +750,9 @@ export class GameEngine {
       }
     }
 
-    // Alert nearby civilians & record gunfire in wanted system
+    // Alert nearby civilians, wildlife, & record gunfire in wanted system
     this.npcManager.alertCivilians(this.playerPos, 30);
+    this.wildlifeManager.triggerGunfireReaction(this.playerPos);
     this.wantedLevelSystem.recordGunfire(this.playerPos);
   }
 
@@ -767,11 +771,6 @@ export class GameEngine {
         this.renderer.setSize(w, h, false);
       }
     });
-  }
-
-  public setWeather(newWeather: WeatherType) {
-    this.weather = newWeather;
-    this.weatherSystem.setWeather(newWeather, true);
   }
 
   private loop(currentTime: number) {
@@ -847,6 +846,9 @@ export class GameEngine {
       this.isSprinting,
       (dmg) => {
         this.playerHealth = Math.max(0, this.playerHealth - dmg);
+      },
+      (crimeAmount) => {
+        this.addCrime(crimeAmount);
       }
     );
 
@@ -893,6 +895,7 @@ export class GameEngine {
     this.wantedLevel = this.wantedLevelSystem.getStars();
     this.interiorManager.update(this.playerPos);
     this.streetArtManager.update(this.playerPos, currentTime * 0.001);
+    this.wildlifeManager.update(delta, this.playerPos);
 
     // 8. Rain Particles Animation
     if (this.rainParticles && this.rainParticles.visible) {
@@ -1002,6 +1005,19 @@ export class GameEngine {
         this.playerHeading = this.cameraYaw + Math.PI;
         this.playerMesh.rotation.y = this.playerHeading;
       }
+    }
+
+    // Update lifelike character animations: organic breathing, facial eye blinking, sprint posture, and jump balance
+    if (this.playerRig) {
+      updateCharacterRigAnimation(this.playerRig, {
+        isMoving,
+        isSprinting: this.isSprinting,
+        isCrouching: this.isCrouching,
+        isAiming: this.combatController.isAiming,
+        isAirborne: !this.isGrounded,
+        walkCycle: this.playerWalkCycle,
+        time: performance.now() * 0.001,
+      });
     }
 
     // Delegate upper body, arms, and weapon attachment to CombatController
@@ -1193,6 +1209,7 @@ export class GameEngine {
       };
       localStorage.setItem('agat_save_data', JSON.stringify(data));
       soundManager.playUIClick();
+      this.onNotification?.('GAME SAVED', 'Progress synchronized to storage', 'info');
       return true;
     } catch {
       return false;

@@ -71,10 +71,151 @@ export class SoundManager {
     }
   }
 
+  public setMusicVolume(volume: number) {
+    if (this.musicGain && this.ctx) {
+      this.musicGain.gain.setValueAtTime(Math.max(0, Math.min(1, volume)) * 0.5, this.ctx.currentTime);
+    }
+    if (this.landingMusicGain && this.ctx && this.isLandingMusicPlaying) {
+      this.landingMusicGain.gain.setValueAtTime(Math.max(0, Math.min(1, volume)) * 0.25, this.ctx.currentTime);
+    }
+  }
+
+  public setSFXVolume(volume: number) {
+    if (this.sfxGain && this.ctx) {
+      this.sfxGain.gain.setValueAtTime(Math.max(0, Math.min(1, volume)) * 0.9, this.ctx.currentTime);
+    }
+  }
+
   public setMuted(muted: boolean) {
     this.isMuted = muted;
     if (this.masterGain && this.ctx) {
       this.masterGain.gain.setValueAtTime(muted ? 0 : 0.8, this.ctx.currentTime);
+    }
+  }
+
+  // --- LANDING PAGE LOW AMBIENT MUSIC ---
+  private landingMusicGain: GainNode | null = null;
+  private landingTimer: number | null = null;
+  private landingStep: number = 0;
+  public isLandingMusicPlaying: boolean = false;
+
+  public playLandingMusic() {
+    this.init();
+    this.resume();
+    if (!this.ctx || this.isLandingMusicPlaying) return;
+    this.isLandingMusicPlaying = true;
+
+    if (!this.landingMusicGain) {
+      this.landingMusicGain = this.ctx.createGain();
+      this.landingMusicGain.gain.setValueAtTime(0.001, this.ctx.currentTime);
+      this.landingMusicGain.connect(this.masterGain!);
+    }
+
+    // Smoothly fade in to a warm, gentle low volume level (0.2)
+    const now = this.ctx.currentTime;
+    this.landingMusicGain.gain.cancelScheduledValues(now);
+    this.landingMusicGain.gain.setValueAtTime(this.landingMusicGain.gain.value, now);
+    this.landingMusicGain.gain.linearRampToValueAtTime(0.2, now + 1.2);
+
+    if (this.landingTimer) {
+      window.clearInterval(this.landingTimer);
+    }
+
+    // Lush ambient chord progression: 4 bars, ~3.6s per chord
+    // Chords: Dm9, Bbmaj7, Fmaj9, Am9
+    const chords = [
+      { bass: 73.42, notes: [220.0, 349.23, 523.25, 659.25], lead: [440, 523.25, 659.25] },
+      { bass: 58.27, notes: [174.61, 293.66, 440.0, 587.33], lead: [349.23, 440, 587.33] },
+      { bass: 43.65, notes: [220.0, 329.63, 392.0, 523.25], lead: [523.25, 659.25, 783.99] },
+      { bass: 55.0, notes: [196.0, 261.63, 329.63, 493.88], lead: [392, 493.88, 587.33] },
+    ];
+
+    const playChordStep = () => {
+      if (!this.ctx || !this.landingMusicGain || !this.isLandingMusicPlaying) return;
+      const t = this.ctx.currentTime;
+      const chord = chords[this.landingStep % chords.length];
+      this.landingStep++;
+
+      // Warm low-pass filter
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(460, t);
+      filter.Q.setValueAtTime(1.2, t);
+      filter.connect(this.landingMusicGain);
+
+      // Warm sub-bass note
+      const bassOsc = this.ctx.createOscillator();
+      const bassGain = this.ctx.createGain();
+      bassOsc.type = 'triangle';
+      bassOsc.frequency.setValueAtTime(chord.bass, t);
+      bassGain.gain.setValueAtTime(0.001, t);
+      bassGain.gain.linearRampToValueAtTime(0.18, t + 0.8);
+      bassGain.gain.linearRampToValueAtTime(0.001, t + 3.8);
+      bassOsc.connect(bassGain);
+      bassGain.connect(filter);
+      bassOsc.start(t);
+      bassOsc.stop(t + 3.9);
+
+      // Pad chord notes (analog warmth)
+      chord.notes.forEach((freq, i) => {
+        const osc = this.ctx!.createOscillator();
+        const gain = this.ctx!.createGain();
+        osc.type = i % 2 === 0 ? 'sine' : 'triangle';
+        osc.frequency.setValueAtTime(freq, t);
+        osc.detune.setValueAtTime((i - 1.5) * 4, t);
+
+        gain.gain.setValueAtTime(0.001, t);
+        gain.gain.linearRampToValueAtTime(0.07 / chord.notes.length, t + 0.9);
+        gain.gain.linearRampToValueAtTime(0.001, t + 3.7);
+
+        osc.connect(gain);
+        gain.connect(filter);
+        osc.start(t);
+        osc.stop(t + 3.8);
+      });
+
+      // Gentle melodic bell/ping pinging at beat 1.4s
+      const leadNote = chord.lead[Math.floor(Math.random() * chord.lead.length)];
+      const bellOsc = this.ctx.createOscillator();
+      const bellGain = this.ctx.createGain();
+      bellOsc.type = 'sine';
+      bellOsc.frequency.setValueAtTime(leadNote, t + 1.4);
+      bellGain.gain.setValueAtTime(0.0001, t);
+      bellGain.gain.setValueAtTime(0.0001, t + 1.4);
+      bellGain.gain.linearRampToValueAtTime(0.04, t + 1.45);
+      bellGain.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
+      bellOsc.connect(bellGain);
+      bellGain.connect(this.landingMusicGain);
+      bellOsc.start(t + 1.4);
+      bellOsc.stop(t + 3.3);
+    };
+
+    playChordStep();
+    this.landingTimer = window.setInterval(playChordStep, 3600);
+  }
+
+  public stopLandingMusic(fadeDuration: number = 1.0) {
+    if (!this.isLandingMusicPlaying) return;
+    this.isLandingMusicPlaying = false;
+    if (this.landingTimer) {
+      window.clearInterval(this.landingTimer);
+      this.landingTimer = null;
+    }
+    if (this.landingMusicGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.landingMusicGain.gain.cancelScheduledValues(now);
+      this.landingMusicGain.gain.setValueAtTime(this.landingMusicGain.gain.value, now);
+      this.landingMusicGain.gain.linearRampToValueAtTime(0.001, now + fadeDuration);
+    }
+  }
+
+  public toggleLandingMusic(): boolean {
+    if (this.isLandingMusicPlaying) {
+      this.stopLandingMusic(0.5);
+      return false;
+    } else {
+      this.playLandingMusic();
+      return true;
     }
   }
 
@@ -601,6 +742,122 @@ export class SoundManager {
       noise.start();
       this.activeSprayHissNode = noise;
       this.activeSprayHissGain = gain;
+    } catch {
+      // AudioContext fallback
+    }
+  }
+
+  public playBirdChirp() {
+    if (!this.ctx || this.isMuted) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      const baseFreq = 2200 + Math.random() * 800;
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(baseFreq, now);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.4, now + 0.05);
+      osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.9, now + 0.12);
+
+      gain.gain.setValueAtTime(0.01, now);
+      gain.gain.linearRampToValueAtTime(0.08, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+      osc.connect(gain);
+      gain.connect(this.sfxGain!);
+
+      osc.start(now);
+      osc.stop(now + 0.16);
+    } catch {
+      // AudioContext fallback
+    }
+  }
+
+  public playBirdTakeoff() {
+    if (!this.ctx || this.isMuted) return;
+    try {
+      const now = this.ctx.currentTime;
+      
+      // 1. Flutter noise (wing beats)
+      const bufferSize = Math.floor(this.ctx.sampleRate * 0.4);
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.sin(i * 0.05);
+      }
+
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(800, now);
+      filter.frequency.exponentialRampToValueAtTime(2200, now + 0.3);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.38);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.sfxGain!);
+
+      noise.start(now);
+
+      // 2. High panic squawks
+      for (let i = 0; i < 3; i++) {
+        const osc = this.ctx.createOscillator();
+        const squawkGain = this.ctx.createGain();
+        const t = now + i * 0.07;
+        const freq = 2600 + Math.random() * 600;
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, t);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.7, t + 0.08);
+
+        squawkGain.gain.setValueAtTime(0.06, t);
+        squawkGain.gain.exponentialRampToValueAtTime(0.001, t + 0.09);
+
+        osc.connect(squawkGain);
+        squawkGain.connect(this.sfxGain!);
+
+        osc.start(t);
+        osc.stop(t + 0.1);
+      }
+    } catch {
+      // AudioContext fallback
+    }
+  }
+
+  public playAnimalRustle() {
+    if (!this.ctx || this.isMuted) return;
+    try {
+      const now = this.ctx.currentTime;
+      const bufferSize = Math.floor(this.ctx.sampleRate * 0.25);
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1);
+      }
+
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(1400, now);
+      filter.Q.setValueAtTime(1.8, now);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.08, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.sfxGain!);
+
+      noise.start(now);
     } catch {
       // AudioContext fallback
     }

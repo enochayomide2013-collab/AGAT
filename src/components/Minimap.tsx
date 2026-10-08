@@ -4,12 +4,12 @@ import { GameEngine } from '../engine/GameEngine';
 import { INTERIOR_LOCATIONS } from '../engine/InteriorManager';
 import { ALLEY_TAG_WALLS } from '../engine/StreetArtManager';
 
-interface MiniMapProps {
+interface MinimapProps {
   engine: GameEngine | null;
   onOpenFullMap: () => void;
 }
 
-export const MiniMap: React.FC<MiniMapProps> = ({ engine, onOpenFullMap }) => {
+export const Minimap: React.FC<MinimapProps> = ({ engine, onOpenFullMap }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isRotatingMode, setIsRotatingMode] = useState<boolean>(true); // Rotating vs North-Up
   const [zoomLevel, setZoomLevel] = useState<number>(0.55); // pixels per world meter
@@ -242,6 +242,31 @@ export const MiniMap: React.FC<MiniMapProps> = ({ engine, onOpenFullMap }) => {
         }
       });
 
+      // 7b. Draw Ambient Wildlife Blips (Parks & Outskirts)
+      if (engine.wildlifeManager) {
+        engine.wildlifeManager.birds.forEach((bird) => {
+          const bx = toRelX(bird.position.x);
+          const by = toRelY(bird.position.z);
+          if (Math.hypot(bx, by) < radius) {
+            ctx.fillStyle = '#10b981'; // Emerald bird pip
+            ctx.beginPath();
+            ctx.arc(bx, by, 1.4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+
+        engine.wildlifeManager.animals.forEach((animal) => {
+          const ax = toRelX(animal.position.x);
+          const ay = toRelY(animal.position.z);
+          if (Math.hypot(ax, ay) < radius) {
+            ctx.fillStyle = '#f59e0b'; // Amber animal pip
+            ctx.beginPath();
+            ctx.arc(ax, ay, 1.6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+      }
+
       // 8. Draw Vehicles
       engine.vehicleManager.vehicles.forEach((v) => {
         if (v.isPlayerInside) return;
@@ -448,3 +473,5 @@ export const MiniMap: React.FC<MiniMapProps> = ({ engine, onOpenFullMap }) => {
     </div>
   );
 };
+
+export const MiniMap = Minimap;

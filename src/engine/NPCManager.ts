@@ -4,6 +4,27 @@ import { audioController } from './AudioController';
 import { ActiveVehicle } from './VehicleManager';
 import { WorldBuilder } from './WorldBuilder';
 
+export interface RagdollLimb {
+  mesh: THREE.Mesh;
+  baseOffset: THREE.Vector3;
+  targetRot: THREE.Euler;
+}
+
+export interface RagdollData {
+  active: boolean;
+  settled: boolean;
+  settleTimer: number;
+  centerVel: THREE.Vector3;
+  centerAngVel: THREE.Vector3;
+  limbs: {
+    head: RagdollLimb;
+    leftArm: RagdollLimb;
+    rightArm: RagdollLimb;
+    leftLeg: RagdollLimb;
+    rightLeg: RagdollLimb;
+  };
+}
+
 export interface ActiveNPC {
   data: NPCData;
   mesh: THREE.Group;
@@ -14,6 +35,7 @@ export interface ActiveNPC {
   fleeTimer: number;
   shootCooldown: number;
   isDefeated: boolean;
+  ragdoll?: RagdollData;
 
   // Finite State Machine (FSM) state properties
   stateTimer: number; // Duration spent in current FSM state (idle, reacting, running)
@@ -221,8 +243,15 @@ export class NPCManager {
     activeVehicles: ActiveVehicle[] = [],
     isPlayerAiming: boolean = false,
     isPlayerSprinting: boolean = false,
-    onEnemyAttackPlayer?: (damage: number) => void
+    onEnemyAttackPlayer?: (damage: number) => void,
+    onCrimeReported?: (amount: number) => void
   ) {
+    // 1. Advance active ragdoll physics simulations
+    this.updateRagdolls(delta);
+
+    // 2. Check high-impact vehicle collisions against NPCs
+    this.checkVehicleCollisions(activeVehicles, playerPos, listenerHeading, onCrimeReported);
+
     for (const npc of this.npcs) {
       if (npc.isDefeated) continue;
 
@@ -583,18 +612,24 @@ export class NPCManager {
     }
   }
 
-  public damageNPC(pos: THREE.Vector3, damage: number, radius = 1.5): { hitNPC: ActiveNPC | null; wasDefeated: boolean } {
+  public damageNPC(
+    pos: THREE.Vector3,
+    damage: number,
+    radius = 1.5,
+    impactVector?: THREE.Vector3
+  ): { hitNPC: ActiveNPC | null; wasDefeated: boolean } {
     for (const npc of this.npcs) {
       if (npc.isDefeated) continue;
       const d = npc.mesh.position.distanceTo(pos);
       if (d <= radius) {
         npc.data.health -= damage;
         if (npc.data.health <= 0) {
-          npc.isDefeated = true;
-          npc.data.state = 'defeated';
-          // Non-graphic collapse / knock-down rotation
-          npc.mesh.rotation.x = Math.PI / 2;
-          npc.mesh.position.y = 0.2;
+          const defaultImpact = impactVector || new THREE.Vector3(
+            (Math.random() - 0.5) * 3,
+            2.5,
+            (Math.random() - 0.5) * 3
+          );
+          this.triggerRagdoll(npc, defaultImpact);
           return { hitNPC: npc, wasDefeated: true };
         }
         // Escalate into running if hit
@@ -603,5 +638,229 @@ export class NPCManager {
       }
     }
     return { hitNPC: null, wasDefeated: false };
+  }
+
+  // ==========================================
+  // RAGDOLL PHYSICS & VEHICLE IMPACT SYSTEM
+  // ==========================================
+  public triggerRagdoll(npc: ActiveNPC, impactForce: THREE.Vector3) {
+    if (npc.isDefeated && npc.ragdoll?.active) return;
+
+    npc.isDefeated = true;
+    npc.data.state = 'defeated';
+
+    const upForce = Math.max(1.8, impactForce.y);
+    const horizForce = new THREE.Vector3(impactForce.x, 0, impactForce.z);
+
+    // Add random torque for realistic airborne tumbling
+    const randomSpin = new THREE.Vector3(
+      (Math.random() - 0.5) * 12.0,
+      (Math.random() - 0.5) * 8.0,
+      (Math.random() - 0.5) * 10.0
+    );
+
+    npc.ragdoll = {
+      active: true,
+      settled: false,
+      settleTimer: 0,
+      centerVel: new THREE.Vector3(horizForce.x, upForce, horizForce.z),
+      centerAngVel: randomSpin,
+      limbs: {
+        head: {
+          mesh: npc.head,
+          baseOffset: new THREE.Vector3(0, 1.72, 0),
+          targetRot: new THREE.Euler((Math.random() - 0.5) * 0.8, 0, (Math.random() - 0.5) * 0.8),
+        },
+        leftArm: {
+          mesh: npc.arms[0],
+          baseOffset: new THREE.Vector3(-0.35, 1.1, 0),
+          targetRot: new THREE.Euler(-1.5 + Math.random() * 0.5, 0, -0.8 - Math.random() * 0.8),
+        },
+        rightArm: {
+          mesh: npc.arms[1],
+          baseOffset: new THREE.Vector3(0.35, 1.1, 0),
+          targetRot: new THREE.Euler(-1.5 + Math.random() * 0.5, 0, 0.8 + Math.random() * 0.8),
+        },
+        leftLeg: {
+          mesh: npc.legs[0],
+          baseOffset: new THREE.Vector3(-0.14, 0.38, 0),
+          targetRot: new THREE.Euler(0.4 + Math.random() * 0.5, 0, -0.3),
+        },
+        rightLeg: {
+          mesh: npc.legs[1],
+          baseOffset: new THREE.Vector3(0.14, 0.38, 0),
+          targetRot: new THREE.Euler(-0.4 - Math.random() * 0.5, 0, 0.3),
+        },
+      },
+    };
+  }
+
+  private updateRagdolls(delta: number) {
+    const gravity = -18.0;
+
+    for (const npc of this.npcs) {
+      if (!npc.isDefeated || !npc.ragdoll || !npc.ragdoll.active) continue;
+      const rd = npc.ragdoll;
+
+      if (rd.settled) continue;
+
+      // 1. Gravity & Linear Motion
+      rd.centerVel.y += gravity * delta;
+      npc.mesh.position.addScaledVector(rd.centerVel, delta);
+
+      // 2. Angular Motion & Tumbling
+      npc.mesh.rotation.x += rd.centerAngVel.x * delta;
+      npc.mesh.rotation.y += rd.centerAngVel.y * delta;
+      npc.mesh.rotation.z += rd.centerAngVel.z * delta;
+
+      // 3. Ground Collision & Floor Reaction
+      const minFloorY = 0.22; // resting height of body mesh on asphalt
+      if (npc.mesh.position.y <= minFloorY) {
+        npc.mesh.position.y = minFloorY;
+
+        // Bounce
+        if (Math.abs(rd.centerVel.y) > 0.8) {
+          rd.centerVel.y = -rd.centerVel.y * 0.32;
+        } else {
+          rd.centerVel.y = 0;
+        }
+
+        // Friction damping on ground
+        const horizFriction = Math.pow(0.08, delta);
+        rd.centerVel.x *= horizFriction;
+        rd.centerVel.z *= horizFriction;
+
+        // Angular damping on ground
+        const angDamping = Math.pow(0.04, delta);
+        rd.centerAngVel.multiplyScalar(angDamping);
+      }
+
+      // 4. Dynamic Limb Flail / Sprawl Inertia
+      const speed = rd.centerVel.length();
+      const isAirborne = npc.mesh.position.y > minFloorY + 0.05;
+
+      // Head flail
+      rd.limbs.head.mesh.rotation.x = THREE.MathUtils.lerp(
+        rd.limbs.head.mesh.rotation.x,
+        isAirborne ? Math.sin(performance.now() * 0.015) * 0.6 : rd.limbs.head.targetRot.x,
+        delta * 8
+      );
+      rd.limbs.head.mesh.rotation.z = THREE.MathUtils.lerp(
+        rd.limbs.head.mesh.rotation.z,
+        isAirborne ? Math.cos(performance.now() * 0.015) * 0.5 : rd.limbs.head.targetRot.z,
+        delta * 8
+      );
+
+      // Arms flail outward in air, sprawl on floor
+      const armTargetZLeft = isAirborne ? -1.8 : rd.limbs.leftArm.targetRot.z;
+      const armTargetZRight = isAirborne ? 1.8 : rd.limbs.rightArm.targetRot.z;
+
+      rd.limbs.leftArm.mesh.rotation.z = THREE.MathUtils.lerp(
+        rd.limbs.leftArm.mesh.rotation.z,
+        armTargetZLeft,
+        delta * 10
+      );
+      rd.limbs.leftArm.mesh.rotation.x = THREE.MathUtils.lerp(
+        rd.limbs.leftArm.mesh.rotation.x,
+        rd.limbs.leftArm.targetRot.x,
+        delta * 8
+      );
+
+      rd.limbs.rightArm.mesh.rotation.z = THREE.MathUtils.lerp(
+        rd.limbs.rightArm.mesh.rotation.z,
+        armTargetZRight,
+        delta * 10
+      );
+      rd.limbs.rightArm.mesh.rotation.x = THREE.MathUtils.lerp(
+        rd.limbs.rightArm.mesh.rotation.x,
+        rd.limbs.rightArm.targetRot.x,
+        delta * 8
+      );
+
+      // Legs bend/sprawl
+      rd.limbs.leftLeg.mesh.rotation.x = THREE.MathUtils.lerp(
+        rd.limbs.leftLeg.mesh.rotation.x,
+        rd.limbs.leftLeg.targetRot.x,
+        delta * 8
+      );
+      rd.limbs.rightLeg.mesh.rotation.x = THREE.MathUtils.lerp(
+        rd.limbs.rightLeg.mesh.rotation.x,
+        rd.limbs.rightLeg.targetRot.x,
+        delta * 8
+      );
+
+      // 5. Settling check
+      if (!isAirborne && speed < 0.12 && rd.centerAngVel.length() < 0.2) {
+        rd.settleTimer += delta;
+        if (rd.settleTimer > 0.35) {
+          rd.settled = true;
+          rd.centerVel.set(0, 0, 0);
+          rd.centerAngVel.set(0, 0, 0);
+        }
+      }
+    }
+  }
+
+  private checkVehicleCollisions(
+    activeVehicles: ActiveVehicle[],
+    playerPos: THREE.Vector3,
+    listenerHeading: number,
+    onCrimeReported?: (amount: number) => void
+  ) {
+    for (const veh of activeVehicles) {
+      const vehSpeed = Math.abs(veh.speed);
+      if (vehSpeed < 2.2) continue; // Only moving vehicles trigger ragdoll collisions
+
+      const vehPos = veh.mesh.position;
+
+      for (const npc of this.npcs) {
+        if (npc.isDefeated) continue;
+
+        const npcPos = npc.mesh.position;
+        const dist = vehPos.distanceTo(npcPos);
+
+        if (dist < 2.1) {
+          // Calculate impact momentum direction
+          const impactDir = new THREE.Vector3()
+            .subVectors(npcPos, vehPos)
+            .normalize();
+
+          const vehHeadingVec = new THREE.Vector3(
+            Math.sin(veh.heading),
+            0,
+            Math.cos(veh.heading)
+          );
+          impactDir.add(vehHeadingVec).normalize();
+
+          // Launch impulse magnitude proportional to vehicle speed
+          const forceMagnitude = Math.max(7.0, vehSpeed * 0.55);
+          impactDir.multiplyScalar(forceMagnitude);
+          impactDir.y = 2.5 + vehSpeed * 0.15; // Upward toss
+
+          // Apply collision damage
+          const damage = vehSpeed * 14.0;
+          npc.data.health -= damage;
+
+          // Sound effect & startled vocal scream
+          audioController.triggerPedestrianChatter(
+            playerPos,
+            listenerHeading,
+            npcPos,
+            'startled'
+          );
+
+          if (npc.data.health <= 0 || vehSpeed > 4.2) {
+            this.triggerRagdoll(npc, impactDir);
+
+            if (veh.isPlayerInside && onCrimeReported) {
+              onCrimeReported(npc.data.type === 'police' ? 2.5 : 1.5);
+            }
+          } else {
+            // Non-fatal knockback: run away from vehicle
+            this.transitionToRunning(npc, vehPos, 6.0);
+          }
+        }
+      }
+    }
   }
 }

@@ -24,7 +24,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame, hasSavedGame, e
   const handleNewGame = () => {
     localStorage.removeItem('agat_save_data');
     if (engine) {
-      engine.playerPos.set(-118, 0, 36);
+      engine.playerPos.set(-120, 0, 18);
       engine.playerHealth = 100;
       engine.playerMoney = 500;
       engine.wantedLevel = 0;

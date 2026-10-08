@@ -52,18 +52,43 @@ export default function App() {
       if (!isPlaying || isGameOver) return;
 
       if (e.code === 'KeyM' || e.key === 'm' || e.key === 'M') {
-        setIsMapOpen((prev) => !prev);
+        setIsMapOpen((prev) => {
+          const next = !prev;
+          if (engine) {
+            engine.isPaused = next;
+            engine.keys = {};
+          }
+          return next;
+        });
       } else if (e.code === 'KeyB' || e.key === 'b' || e.key === 'B') {
-        setIsShopOpen((prev) => !prev);
+        setIsShopOpen((prev) => {
+          const next = !prev;
+          if (engine) {
+            engine.isPaused = next;
+            engine.keys = {};
+          }
+          return next;
+        });
       } else if (e.code === 'Escape') {
         if (isShopOpen) {
           setIsShopOpen(false);
+          if (engine) {
+            engine.isPaused = false;
+            engine.keys = {};
+          }
         } else if (isMapOpen) {
           setIsMapOpen(false);
+          if (engine) {
+            engine.isPaused = false;
+            engine.keys = {};
+          }
         } else {
           setIsPaused((prev) => {
             const next = !prev;
-            if (engine) engine.isPaused = next;
+            if (engine) {
+              engine.isPaused = next;
+              engine.keys = {};
+            }
             return next;
           });
         }
@@ -78,6 +103,7 @@ export default function App() {
     setIsPlaying(true);
     setIsPaused(false);
     if (engine) {
+      engine.keys = {};
       engine.isPaused = false;
     }
     setTimeout(() => {
@@ -88,6 +114,7 @@ export default function App() {
   const handleResumeGame = () => {
     setIsPaused(false);
     if (engine) {
+      engine.keys = {};
       engine.isPaused = false;
     }
     setTimeout(() => {
@@ -120,12 +147,27 @@ export default function App() {
       {isPlaying && !isPaused && !isMapOpen && !isShopOpen && !isGameOver && (
         <HUD
           engine={engine}
-          onOpenMap={() => setIsMapOpen(true)}
+          onOpenMap={() => {
+            setIsMapOpen(true);
+            if (engine) {
+              engine.isPaused = true;
+              engine.keys = {};
+            }
+          }}
           onOpenPause={() => {
             setIsPaused(true);
-            if (engine) engine.isPaused = true;
+            if (engine) {
+              engine.isPaused = true;
+              engine.keys = {};
+            }
           }}
-          onOpenShop={() => setIsShopOpen(true)}
+          onOpenShop={() => {
+            setIsShopOpen(true);
+            if (engine) {
+              engine.isPaused = true;
+              engine.keys = {};
+            }
+          }}
         />
       )}
 
@@ -155,7 +197,13 @@ export default function App() {
       {isMapOpen && (
         <MapModal
           engine={engine}
-          onClose={() => setIsMapOpen(false)}
+          onClose={() => {
+            setIsMapOpen(false);
+            if (engine) {
+              engine.isPaused = false;
+              engine.keys = {};
+            }
+          }}
         />
       )}
 
@@ -163,7 +211,13 @@ export default function App() {
       {isShopOpen && engine && (
         <ShopModal
           engine={engine}
-          onClose={() => setIsShopOpen(false)}
+          onClose={() => {
+            setIsShopOpen(false);
+            if (engine) {
+              engine.isPaused = false;
+              engine.keys = {};
+            }
+          }}
         />
       )}
 

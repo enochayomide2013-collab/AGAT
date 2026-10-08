@@ -713,8 +713,8 @@ export class WorldBuilder {
   public spawnWeaponPickups() {
     const pickupDefs: Array<{ x: number; z: number; weapon: WeaponDef }> = [
       {
-        x: -110,
-        z: 38,
+        x: -120,
+        z: 22,
         weapon: {
           id: 'arc9_stunner',
           name: 'ARC-9 Stunner',

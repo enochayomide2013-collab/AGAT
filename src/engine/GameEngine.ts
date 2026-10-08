@@ -1,12 +1,15 @@
 import * as THREE from 'three';
 import { GameSaveData, WeatherType } from '../types/game';
+import { AudioController, audioController } from './AudioController';
 import { CombatController } from './CombatController';
 import { CombatManager } from './CombatManager';
 import { MissionManager } from './MissionManager';
 import { NPCManager } from './NPCManager';
 import { ShopManager } from './ShopManager';
 import { soundManager } from './SoundManager';
-import { ActiveVehicle, VehicleManager } from './VehicleManager';
+import { VehicleManager } from './VehicleManager';
+import { WantedLevel } from './WantedLevel';
+import { WeatherSystem } from './WeatherSystem';
 import { WeaponInventory } from './WeaponInventory';
 import { WorldBuilder } from './WorldBuilder';
 
@@ -25,6 +28,9 @@ export class GameEngine {
   public combatManager: CombatManager;
   public missionManager: MissionManager;
   public shopManager: ShopManager;
+  public weatherSystem: WeatherSystem;
+  public wantedLevelSystem: WantedLevel;
+  public audioController: AudioController;
 
   // Lighting & Day/Night
   public dirLight: THREE.DirectionalLight;
@@ -36,7 +42,7 @@ export class GameEngine {
   public stormFlashTimer: number = 0;
 
   // Player Character State
-  public playerPos: THREE.Vector3 = new THREE.Vector3(-118, 0, 36); // near Safehouse
+  public playerPos: THREE.Vector3 = new THREE.Vector3(-120, 0, 18); // Safehouse Plaza / Avenue
   public playerVelocity: THREE.Vector3 = new THREE.Vector3();
   public playerHeading: number = 0;
   public isGrounded: boolean = true;
@@ -134,6 +140,10 @@ export class GameEngine {
     this.combatManager = new CombatManager(this.scene, this.weaponInventory, this.combatController);
     this.missionManager = new MissionManager();
     this.shopManager = new ShopManager();
+    this.weatherSystem = new WeatherSystem(this.scene, this.worldBuilder, this.vehicleManager, this.dirLight, this.hemiLight);
+    this.wantedLevelSystem = new WantedLevel(this.npcManager, this.vehicleManager);
+    this.audioController = audioController;
+    this.audioController.init();
 
     // 5. Build Player Character Rig
     const { group, torso, head, legs, arms } = this.createPlayerRig();
@@ -271,6 +281,7 @@ export class GameEngine {
   private setupInputs() {
     const registerKeyDown = (e: KeyboardEvent) => {
       soundManager.resume();
+      this.audioController.resume();
       this.keys[e.code] = true;
       if (e.key) {
         this.keys[e.key] = true;
@@ -332,6 +343,7 @@ export class GameEngine {
 
     this.canvas.addEventListener('mousedown', (e) => {
       soundManager.resume();
+      this.audioController.resume();
       this.mouseButtons[e.button] = true;
 
       // Right Click (Aiming)
@@ -375,6 +387,7 @@ export class GameEngine {
   private handleInteract() {
     if (this.vehicleManager.playerVehicle) {
       // Exit vehicle
+      this.audioController.stopPlayerEngine();
       const exitPos = this.vehicleManager.exitVehicle();
       this.playerPos.copy(exitPos);
       this.playerPos.y = 0;
@@ -387,7 +400,9 @@ export class GameEngine {
     const nearestV = this.vehicleManager.getNearestVehicle(this.playerPos, 3.8);
     if (nearestV) {
       this.vehicleManager.enterVehicle(nearestV);
+      this.audioController.startPlayerEngine();
       this.playerMesh.visible = false;
+      this.wantedLevelSystem.recordVehicleTheft(this.playerPos, !!nearestV.def.isPolice);
       return;
     }
 
@@ -476,9 +491,9 @@ export class GameEngine {
         }
 
         if (hitNPC.data.type === 'civilian') {
-          this.addCrime(1.5);
+          this.wantedLevelSystem.recordAssault(this.playerPos, false);
         } else if (hitNPC.data.type === 'police') {
-          this.addCrime(2.5);
+          this.wantedLevelSystem.recordAssault(this.playerPos, true);
         }
       }
 
@@ -499,9 +514,9 @@ export class GameEngine {
       }
     }
 
-    // Alert nearby civilians & add crime heat for discharging weapon in public
+    // Alert nearby civilians & record gunfire in wanted system
     this.npcManager.alertCivilians(this.playerPos, 30);
-    this.addCrime(0.3);
+    this.wantedLevelSystem.recordGunfire(this.playerPos);
   }
 
   public addCrime(amount: number) {
@@ -529,10 +544,7 @@ export class GameEngine {
 
   public setWeather(newWeather: WeatherType) {
     this.weather = newWeather;
-    soundManager.setWeatherAudio(newWeather);
-    if (this.rainParticles) {
-      this.rainParticles.visible = newWeather === 'rain' || newWeather === 'storm';
-    }
+    this.weatherSystem.setWeather(newWeather, true);
   }
 
   private loop(currentTime: number) {
@@ -542,9 +554,10 @@ export class GameEngine {
 
     if (this.isPaused) return;
 
-    // 1. Day / Night Progress
+    // 1. Day / Night & Dynamic Weather System
     this.timeOfDay = (this.timeOfDay + this.daySpeed * delta) % 24;
-    this.updateAtmosphere();
+    this.weatherSystem.update(delta, this.timeOfDay, this.playerPos);
+    this.weather = this.weatherSystem.currentWeather;
 
     // 2. Player Controls or Vehicle Driving
     if (this.vehicleManager.playerVehicle) {
@@ -592,10 +605,47 @@ export class GameEngine {
       }
     });
 
-    // 5. NPC Crowd AI
-    this.npcManager.update(delta, this.playerPos, this.wantedLevel, (dmg) => {
-      this.playerHealth = Math.max(0, this.playerHealth - dmg);
-    });
+    // 5. NPC Crowd AI with Finite State Machine & Traffic Events
+    const listenerHeading = this.vehicleManager.playerVehicle
+      ? this.vehicleManager.playerVehicle.heading
+      : this.playerHeading;
+
+    this.npcManager.update(
+      delta,
+      this.playerPos,
+      listenerHeading,
+      this.wantedLevel,
+      this.vehicleManager.vehicles,
+      this.combatController.isAiming,
+      this.isSprinting,
+      (dmg) => {
+        this.playerHealth = Math.max(0, this.playerHealth - dmg);
+      }
+    );
+
+    // 5b. Update 3D Spatial Audio Controller
+    if (this.vehicleManager.playerVehicle) {
+      const pv = this.vehicleManager.playerVehicle;
+      const speedRatio = Math.min(1, Math.abs(pv.speed) / Math.max(1, pv.def.maxSpeed));
+      this.audioController.updatePlayerEngine(speedRatio, pv.speed < -0.1);
+    } else {
+      this.audioController.stopPlayerEngine();
+    }
+
+    // Update 3D traffic engines with dynamic spatialization
+    this.audioController.updateTrafficEngines(
+      this.playerPos,
+      listenerHeading,
+      this.vehicleManager.vehicles.map((v) => ({
+        id: v.id,
+        position: v.mesh.position,
+        speed: v.speed,
+        isPlayerVehicle: v.isPlayerInside,
+      }))
+    );
+
+    // Dynamic weather sound scaling
+    this.audioController.updateWeatherAudio(this.weather, this.weatherSystem.wetness);
 
     // 6. Mission Check & Rewards
     this.missionManager.checkPlayerProgress(
@@ -610,14 +660,9 @@ export class GameEngine {
     // 7. World Pickups Animation
     this.worldBuilder.updatePickups(delta);
 
-    // 7. Wanted System Decay
-    if (this.wantedLevel > 0) {
-      this.wantedTimer -= delta;
-      if (this.wantedTimer <= 0) {
-        this.wantedLevel = Math.max(0, this.wantedLevel - 1);
-        if (this.wantedLevel > 0) this.wantedTimer = 18;
-      }
-    }
+    // 8. Wanted Threat System Update
+    this.wantedLevelSystem.update(delta, this.playerPos);
+    this.wantedLevel = this.wantedLevelSystem.getStars();
 
     // 8. Rain Particles Animation
     if (this.rainParticles && this.rainParticles.visible) {
@@ -653,45 +698,60 @@ export class GameEngine {
     const isLeft = !!(this.keys['KeyA'] || this.keys['ArrowLeft'] || this.keys['a'] || this.keys['A']);
     const isRight = !!(this.keys['KeyD'] || this.keys['ArrowRight'] || this.keys['d'] || this.keys['D']);
 
-    const moveDir = new THREE.Vector3();
-    if (isForward) moveDir.z += 1;
-    if (isBackward) moveDir.z -= 1;
-    if (isLeft) moveDir.x -= 1;
-    if (isRight) moveDir.x += 1;
+    const forwardInput = (isForward ? 1 : 0) - (isBackward ? 1 : 0);
+    const rightInput = (isRight ? 1 : 0) - (isLeft ? 1 : 0);
 
     this.isSprinting = !!(this.keys['ShiftLeft'] || this.keys['ShiftRight']);
     this.isCrouching = !!(this.keys['KeyC'] || this.keys['c']);
 
     const speedBonus = this.shopManager.unlockedSkills.has('skill_speed') ? 1.25 : 1.0;
-    let speed = 4.8 * speedBonus;
-    if (this.isSprinting && !this.combatController.isAiming) speed = 8.8 * speedBonus;
-    if (this.isCrouching) speed = 2.4 * speedBonus;
-    if (this.combatController.isAiming) speed = 3.2 * speedBonus; // Aim walk speed
+    let speed = 5.2 * speedBonus;
+    if (this.isSprinting && !this.combatController.isAiming) speed = 9.2 * speedBonus;
+    if (this.isCrouching) speed = 2.6 * speedBonus;
+    if (this.combatController.isAiming) speed = 3.4 * speedBonus; // Aim walk speed
 
-    const isMoving = moveDir.lengthSq() > 0;
+    const isMoving = forwardInput !== 0 || rightInput !== 0;
+
+    // Camera planar vectors (Yaw 0 = looking towards -Z)
+    const camForward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
+    const camRight = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
 
     if (isMoving) {
-      moveDir.normalize();
-      // Rotate movement vector by camera yaw
-      const moveAngle = Math.atan2(moveDir.x, moveDir.z) + this.cameraYaw;
-      const forwardVec = new THREE.Vector3(Math.sin(moveAngle), 0, Math.cos(moveAngle));
+      // Calculate move vector in world space aligned with camera direction
+      const forwardVec = new THREE.Vector3()
+        .addScaledVector(camForward, forwardInput)
+        .addScaledVector(camRight, rightInput)
+        .normalize();
 
-      const nextPos = this.playerPos.clone().addScaledVector(forwardVec, speed * delta);
+      const deltaMove = forwardVec.clone().multiplyScalar(speed * delta);
+      const nextPos = this.playerPos.clone().add(deltaMove);
 
-      // Check collision
-      if (!this.worldBuilder.checkCollision(nextPos, 0.45)) {
+      // Smooth sliding collision against buildings and obstacles
+      if (!this.worldBuilder.checkCollision(nextPos, 0.4)) {
         this.playerPos.copy(nextPos);
+      } else {
+        // Try slide on X axis
+        const nextPosX = this.playerPos.clone().add(new THREE.Vector3(deltaMove.x, 0, 0));
+        if (!this.worldBuilder.checkCollision(nextPosX, 0.4)) {
+          this.playerPos.copy(nextPosX);
+        } else {
+          // Try slide on Z axis
+          const nextPosZ = this.playerPos.clone().add(new THREE.Vector3(0, 0, deltaMove.z));
+          if (!this.worldBuilder.checkCollision(nextPosZ, 0.4)) {
+            this.playerPos.copy(nextPosZ);
+          }
+        }
       }
 
-      // If aiming, face camera direction; otherwise face movement direction
-      if (this.combatController.aimTransition > 0.3) {
-        this.playerHeading = this.cameraYaw;
+      // If aiming, face camera aim direction; otherwise face movement direction
+      if (this.combatController.aimTransition > 0.25) {
+        this.playerHeading = this.cameraYaw + Math.PI;
       } else {
-        this.playerHeading = moveAngle;
+        this.playerHeading = Math.atan2(forwardVec.x, forwardVec.z);
       }
       this.playerMesh.rotation.y = this.playerHeading;
 
-      // Leg cycle
+      // Leg cycle animation
       this.playerWalkCycle += delta * (this.isSprinting ? 14 : 9);
       const legAngle = Math.sin(this.playerWalkCycle) * 0.6;
       this.playerLegs[0].rotation.x = legAngle;
@@ -706,9 +766,9 @@ export class GameEngine {
       this.playerLegs[0].rotation.x = 0;
       this.playerLegs[1].rotation.x = 0;
 
-      // When standing still and aiming, face crosshair camera yaw
+      // When standing still and aiming, face crosshair camera aim direction
       if (this.combatController.aimTransition > 0.1) {
-        this.playerHeading = this.cameraYaw;
+        this.playerHeading = this.cameraYaw + Math.PI;
         this.playerMesh.rotation.y = this.playerHeading;
       }
     }
@@ -884,6 +944,9 @@ export class GameEngine {
       const data: GameSaveData = JSON.parse(raw);
 
       this.playerPos.set(data.player.x, data.player.y, data.player.z);
+      if (this.worldBuilder.checkCollision(this.playerPos, 0.45)) {
+        this.playerPos.set(-120, 0, 18);
+      }
       this.playerMesh.position.copy(this.playerPos);
       this.playerHeading = data.player.rotation;
       this.playerHealth = data.player.health;

@@ -81,7 +81,7 @@ export interface NPCData {
   speed: number;
   targetX: number;
   targetZ: number;
-  state: 'idle' | 'walking' | 'fleeing' | 'attacking' | 'defeated';
+  state: 'idle' | 'walking' | 'running' | 'reacting' | 'fleeing' | 'attacking' | 'defeated';
   health: number;
   maxHealth: number;
   weaponId?: string;

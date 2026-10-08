@@ -1,5 +1,5 @@
-import React from 'react';
-import { Shield, DollarSign, Crosshair, Heart, Navigation, Gauge, CloudSun, CloudRain, ShoppingBag } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
+import { Shield, DollarSign, Crosshair, Heart, Navigation, Gauge, CloudSun, CloudRain, ShoppingBag, Timer, Star, Siren, Building2, Sparkles, SprayCan } from 'lucide-react';
 import { GameEngine } from '../engine/GameEngine';
 import { soundManager } from '../engine/SoundManager';
 import { MiniMap } from './MiniMap';
@@ -17,7 +17,19 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
 
   const playerHealth = engine.playerHealth;
   const playerMoney = engine.playerMoney;
-  const wantedLevel = engine.wantedLevel;
+  const wantedLevel = engine.wantedLevelSystem.getStars();
+  const wantedStatus = engine.wantedLevelSystem.getStatus();
+  const wantedHeat = engine.wantedLevelSystem.getHeatPercent();
+  const evasionSeconds = Math.ceil(engine.wantedLevelSystem.evasionTimer);
+
+  // Play sound when wanted level increases
+  const prevWantedRef = useRef<number>(wantedLevel);
+  useEffect(() => {
+    if (wantedLevel > prevWantedRef.current && wantedLevel > 0) {
+      soundManager.playHorn(); // sudden alert tone
+    }
+    prevWantedRef.current = wantedLevel;
+  }, [wantedLevel]);
 
   // WeaponInventory & CombatController states
   const activeWeapon = engine.weaponInventory.getActiveWeapon();
@@ -30,10 +42,29 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
   const activeMission = engine.missionManager.activeMission;
   const currentStep = engine.missionManager.getCurrentStep();
 
+  // Interior info
+  const currentInterior = engine.interiorManager.currentInterior;
+  const activeInteractable = engine.interiorManager.activeInteractable;
+  const nearEntrance = engine.interiorManager.nearExteriorEntrance;
+
+  // Street Art Tagging info
+  const nearTagWall = engine.streetArtManager.activeNearWall;
+  const isSprayingAnimation = engine.streetArtManager.isAnimatingSpray;
+  const taggedCount = engine.streetArtManager.getTaggedCount();
+  const totalWallsCount = engine.streetArtManager.getTotalWallsCount();
+
   // Interaction check
   let interactionPrompt: string | null = null;
-  if (playerVehicle) {
+  if (isSprayingAnimation) {
+    interactionPrompt = null;
+  } else if (playerVehicle) {
     interactionPrompt = 'Press [E] to Exit Vehicle';
+  } else if (currentInterior && activeInteractable) {
+    interactionPrompt = `Press [E] to ${activeInteractable.actionText}`;
+  } else if (!currentInterior && nearTagWall) {
+    interactionPrompt = `Press [E] to Spray Tag Wall: ${nearTagWall.name} (+$${nearTagWall.reward})`;
+  } else if (!currentInterior && nearEntrance) {
+    interactionPrompt = `Press [E] to Enter ${nearEntrance.name}`;
   } else {
     // Check nearest weapon pickup in world first
     const nearPickup = engine.worldBuilder.getNearestPickup(engine.playerPos, 3.2);
@@ -131,20 +162,62 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
               <ShoppingBag className="w-4 h-4 text-sky-400" />
               <span>[B] MARKET</span>
             </button>
+
+            {/* Street Art Tags Claimed Counter */}
+            <div className="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 text-amber-300 px-2.5 py-1.5 rounded-md text-xs font-mono font-bold shadow">
+              <SprayCan className="w-3.5 h-3.5 text-amber-400" />
+              <span>TAGS {taggedCount}/{totalWallsCount}</span>
+            </div>
           </div>
         </div>
 
-        {/* Center: Active Mission Objective */}
-        {activeMission && currentStep ? (
+        {/* Center: Active Mission Objective OR Interior Location */}
+        {currentInterior ? (
+          <div className="bg-slate-950/90 backdrop-blur-md border border-sky-400/50 px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2.5 animate-in fade-in duration-200">
+            <Building2 className="w-4 h-4 text-sky-400" />
+            <div>
+              <div className="text-xs font-bold text-white tracking-wide">{currentInterior.name}</div>
+              <div className="text-[10px] font-mono text-sky-400">{currentInterior.district} · INDOORS</div>
+            </div>
+          </div>
+        ) : activeMission && currentStep ? (
           <div className="bg-slate-950/85 backdrop-blur-md border border-amber-500/40 rounded-lg px-4 py-2.5 max-w-md shadow-xl text-center">
-            <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center justify-center gap-1">
+            <div className="text-[10px] font-bold text-amber-400 uppercase tracking-widest flex items-center justify-center gap-1.5 flex-wrap">
+              {activeMission.type && (
+                <span className="bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.2 rounded text-[9px] font-mono">
+                  {activeMission.type.toUpperCase()}
+                </span>
+              )}
               <span>MISSION: {activeMission.title}</span>
               <span>·</span>
               <span>REWARD ${activeMission.reward}</span>
+
+              {/* Countdown timer for timed missions (Deliveries, Races, etc.) */}
+              {activeMission.timeRemaining !== undefined && (
+                <div
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded font-mono font-bold text-xs ml-1 ${
+                    activeMission.timeRemaining < 20
+                      ? 'bg-rose-500/30 text-rose-300 border border-rose-500/60 animate-pulse'
+                      : 'bg-amber-500/30 text-amber-300 border border-amber-500/60'
+                  }`}
+                >
+                  <Timer className="w-3 h-3" />
+                  <span>
+                    {Math.floor(activeMission.timeRemaining / 60)}:
+                    {String(Math.floor(activeMission.timeRemaining % 60)).padStart(2, '0')}
+                  </span>
+                </div>
+              )}
             </div>
-            <div className="text-sm font-semibold text-white mt-0.5">
+            <div className="text-sm font-semibold text-white mt-1">
               {currentStep.step.description}
             </div>
+            {activeMission.elapsedTime !== undefined && activeMission.timeRemaining === undefined && (
+              <div className="text-[10px] font-mono text-slate-400 mt-0.5 flex items-center justify-center gap-1">
+                <Timer className="w-2.5 h-2.5 text-slate-400" />
+                <span>Time: {Math.floor(activeMission.elapsedTime)}s</span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="bg-slate-950/60 backdrop-blur-sm border border-slate-800/80 rounded-lg px-3 py-1.5 text-xs text-slate-300 flex items-center gap-2">
@@ -153,25 +226,77 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
           </div>
         )}
 
-        {/* Right Header: Wanted Level & Health */}
+        {/* Right Header: Dynamic 1-5 Stars Wanted Level & Health */}
         <div className="flex flex-col items-end gap-2">
-          {/* Wanted Level Shields */}
-          <div className="flex items-center gap-1 bg-slate-950/80 px-2.5 py-1 rounded-md border border-slate-800">
-            <span className="text-[10px] font-bold text-slate-400 mr-1 uppercase tracking-wider">WANTED</span>
-            {[1, 2, 3].map((level) => {
-              const active = wantedLevel >= level;
-              return (
-                <Shield
-                  key={level}
-                  className={`w-4 h-4 transition-all ${
-                    active
-                      ? 'text-rose-500 fill-rose-500 animate-pulse'
-                      : 'text-slate-700'
+          {/* Dynamic Wanted Level 1-5 Stars UI */}
+          {wantedLevel > 0 ? (
+            <div className="flex flex-col items-end gap-1 animate-in fade-in zoom-in-95 duration-200">
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border backdrop-blur-md shadow-xl transition-all duration-300 ${
+                  wantedStatus === 'pursuit'
+                    ? 'bg-red-950/90 border-red-500/80 shadow-red-500/20 animate-pulse'
+                    : 'bg-amber-950/85 border-amber-500/70 shadow-amber-500/20'
+                }`}
+              >
+                {/* Status Indicator Icon */}
+                {wantedStatus === 'pursuit' ? (
+                  <Siren className="w-4 h-4 text-red-400 animate-spin-slow shrink-0" />
+                ) : (
+                  <Shield className="w-4 h-4 text-amber-400 shrink-0" />
+                )}
+
+                <span
+                  className={`text-[10px] font-mono font-extrabold tracking-wider uppercase ${
+                    wantedStatus === 'pursuit' ? 'text-red-400' : 'text-amber-400'
                   }`}
-                />
-              );
-            })}
-          </div>
+                >
+                  {wantedStatus === 'pursuit' ? 'PURSUIT' : `EVADING ${evasionSeconds}s`}
+                </span>
+
+                {/* 1-5 Animated Stars */}
+                <div className="flex items-center gap-1 ml-1">
+                  {[1, 2, 3, 4, 5].map((starIdx) => {
+                    const isActive = wantedLevel >= starIdx;
+                    return (
+                      <div
+                        key={starIdx}
+                        className={`transition-all duration-300 transform ${
+                          isActive
+                            ? 'scale-110 opacity-100 rotate-0'
+                            : 'scale-75 opacity-20 -rotate-12'
+                        }`}
+                      >
+                        <Star
+                          className={`w-4 h-4 transition-colors ${
+                            isActive
+                              ? wantedStatus === 'pursuit'
+                                ? 'text-red-400 fill-red-400 drop-shadow-[0_0_6px_rgba(248,113,113,0.8)]'
+                                : 'text-amber-300 fill-amber-300 drop-shadow-[0_0_6px_rgba(252,211,77,0.8)] animate-pulse'
+                              : 'text-slate-600'
+                          }`}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Threat Tier Label */}
+              <div className="text-[9px] font-mono font-bold tracking-widest text-slate-400 bg-slate-950/80 px-2 py-0.5 rounded border border-slate-800">
+                {wantedLevel === 1 && 'THREAT TIER 1 · LOCAL PATROL DISPATCH'}
+                {wantedLevel === 2 && 'THREAT TIER 2 · SQUAD INTERCEPT PURSUIT'}
+                {wantedLevel === 3 && 'THREAT TIER 3 · TACTICAL ARMED PURSUIT'}
+                {wantedLevel === 4 && 'THREAT TIER 4 · SWAT HEAVY DEPLOYMENT'}
+                {wantedLevel === 5 && 'THREAT TIER 5 · MAXIMUM CITYWIDE LOCKDOWN'}
+              </div>
+            </div>
+          ) : (
+            /* Idle Clean State when wanted is 0 */
+            <div className="flex items-center gap-1.5 bg-slate-950/70 px-2.5 py-1 rounded-md border border-slate-800/80 text-[10px] font-mono text-slate-500">
+              <Shield className="w-3.5 h-3.5 text-slate-600" />
+              <span>RECORD CLEAN · 0 STARS</span>
+            </div>
+          )}
 
           {/* Health Bar */}
           <div className="bg-slate-950/80 border border-slate-800 p-2 rounded-lg flex items-center gap-2.5 min-w-[190px]">
@@ -200,6 +325,20 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
 
       {/* CENTER INTERACTION PROMPT */}
       <div className="flex flex-col items-center justify-center my-auto">
+        {isSprayingAnimation && (
+          <div className="bg-slate-950/95 border-2 border-sky-400 px-6 py-4 rounded-xl shadow-[0_0_40px_rgba(0,240,255,0.4)] backdrop-blur-md flex items-center gap-3.5 animate-pulse">
+            <SprayCan className="w-7 h-7 text-sky-400 animate-bounce shrink-0" />
+            <div>
+              <div className="text-sm font-black text-white tracking-widest uppercase">
+                SPRAYING ALLEY STREET ART...
+              </div>
+              <div className="text-[11px] font-mono text-sky-300">
+                AEROSOL CAN IN ACTION · COATING WALL SURFACE
+              </div>
+            </div>
+          </div>
+        )}
+
         {interactionPrompt && (
           <div className="bg-slate-950/90 border border-sky-400/60 px-5 py-2.5 rounded-lg shadow-2xl backdrop-blur-md animate-bounce text-sm font-semibold text-white tracking-wide">
             {interactionPrompt}
@@ -217,12 +356,7 @@ export const HUD: React.FC<HUDProps> = ({ engine, onOpenMap, onOpenPause, onOpen
       <div className="flex items-end justify-between w-full">
         {/* Bottom-Left: MiniMap & Radio */}
         <div className="flex flex-col gap-3 pointer-events-auto">
-          {playerVehicle && (
-            <RadioPlayer
-              currentStation={soundManager.getRadioStation()}
-              onStationChange={(s) => soundManager.setRadioStation(s)}
-            />
-          )}
+          {playerVehicle && <RadioPlayer />}
 
           <div className="flex items-center gap-2">
             <MiniMap engine={engine} onOpenFullMap={onOpenMap} />

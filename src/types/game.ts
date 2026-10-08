@@ -107,6 +107,89 @@ export interface Mission {
   currentStepIndex: number;
   status: 'available' | 'active' | 'completed' | 'failed';
   icon: string;
+  type?: 'Delivery' | 'Race' | 'Assault' | 'Heist';
+  timeLimit?: number; // Time limit in seconds for delivery or race missions
+  timeRemaining?: number; // Current countdown timer in seconds
+  elapsedTime?: number; // Total seconds taken to complete the mission
+}
+
+export type HairstyleType = 'short_fade' | 'mohawk' | 'pompadour' | 'cyber_ponytail' | 'buzz' | 'afro' | 'long_wavy';
+export type FacialHairType = 'none' | 'stubble' | 'goatee' | 'full_beard' | 'moustache';
+export type EyewearType = 'none' | 'cyber_shades' | 'hud_visor' | 'cyber_eye';
+export type BodyType = 'balanced' | 'muscular' | 'slim';
+export type OutfitType = 'cyber_leather' | 'street_hoodie' | 'tactical_vest' | 'formal_suit';
+
+export interface CharacterCustomization {
+  hairstyle: HairstyleType;
+  hairColor: string;
+  skinTone: string;
+  facialHair: FacialHairType;
+  facialHairColor: string;
+  eyewear: EyewearType;
+  eyewearColor: string;
+  bodyType: BodyType;
+  outfit: OutfitType;
+  jacketColor: string;
+  pantsColor: string;
+}
+
+export type RadioStationId = 'off' | 'flash_pop' | 'liberty_rock' | 'pulse_electro' | 'kchat_talk' | 'synthwave' | 'electro' | 'chill';
+
+export interface RadioStationDef {
+  id: RadioStationId;
+  name: string;
+  genre: string;
+  frequency: string;
+  host: string;
+  description: string;
+  color: string;
+}
+
+export interface BuildingInteriorLocation {
+  id: 'diner' | 'shop' | 'apartment' | 'barbershop';
+  name: string;
+  district: string;
+  exteriorPos: Vector3D;
+  interiorPos: Vector3D;
+  exitPos: Vector3D;
+  color: string;
+  icon: string;
+  description: string;
+}
+
+export interface InteriorInteractable {
+  id: string;
+  interiorId: 'diner' | 'shop' | 'apartment' | 'barbershop';
+  name: string;
+  actionText: string;
+  pos: Vector3D;
+  radius: number;
+  type: 'heal' | 'buff' | 'shop' | 'customize' | 'rest' | 'music' | 'chat' | 'ammo' | 'cash';
+  amount?: number;
+}
+
+export interface AlleyTagWallDef {
+  id: string;
+  name: string;
+  district: string;
+  pos: Vector3D; // Wall center point in 3D
+  standPos: Vector3D; // Where player stands to spray
+  normal: Vector3D; // Facing vector (direction perpendicular to wall)
+  rotationY: number;
+  width: number;
+  height: number;
+  wallType: 'brick' | 'concrete' | 'corrugated' | 'subway_tile';
+  reward: number;
+  description: string;
+}
+
+export interface TagStreetArtData {
+  wallId: string;
+  dataUrl: string; // Base64 png of the sprayed artwork
+  author: string;
+  timestamp: number;
+  crewTag?: string;
+  sprayColor: string;
 }
 
 export interface GameSaveData {
@@ -122,10 +205,13 @@ export interface GameSaveData {
     weapons: WeaponDef[];
     wantedLevel: number;
     skills: string[]; // unlocked skill IDs
+    customization?: CharacterCustomization;
   };
   timeOfDay: number; // 0 to 24
   weather: WeatherType;
   completedMissionIds: string[];
   activeMissionId: string | null;
+  savedStreetArt?: Record<string, string>; // wallId -> base64 dataUrl
   timestamp: number;
 }
+

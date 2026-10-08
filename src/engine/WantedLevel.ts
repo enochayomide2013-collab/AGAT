@@ -6,7 +6,7 @@ import { VehicleManager } from './VehicleManager';
 export type PursuitStatus = 'clear' | 'pursuit' | 'evading';
 
 export class WantedLevel {
-  public stars: number = 0; // 0 to 3 star threat meter
+  public stars: number = 0; // 0 to 5 star threat meter
   public heat: number = 0; // 0 to 100 heat progress
   public status: PursuitStatus = 'clear';
 
@@ -21,7 +21,7 @@ export class WantedLevel {
 
   // Police spawn tracking
   private activePoliceSpawns: number = 0;
-  private maxAllowedPoliceSpawns: number = 6;
+  private maxAllowedPoliceSpawns: number = 10;
   private spawnCooldown: number = 0;
 
   constructor(npcManager: NPCManager, vehicleManager: VehicleManager) {
@@ -41,37 +41,48 @@ export class WantedLevel {
     return this.status;
   }
 
+  public getEvasionProgress(): number {
+    if (this.status !== 'evading' || this.maxEvasionTime <= 0) return 0;
+    return Math.max(0, Math.min(1, this.evasionTimer / this.maxEvasionTime));
+  }
+
   // --- RECORD SUSPICIOUS ACTIONS ---
 
   public recordGunfire(pos: THREE.Vector3) {
     this.lastCrimePos.copy(pos);
     this.lastCrimeTime = performance.now();
-    this.addHeat(25);
+    this.addHeat(20);
   }
 
   public recordVehicleTheft(pos: THREE.Vector3, isPolice = false) {
     this.lastCrimePos.copy(pos);
     this.lastCrimeTime = performance.now();
-    this.addHeat(isPolice ? 70 : 40);
+    this.addHeat(isPolice ? 55 : 30);
   }
 
   public recordAssault(pos: THREE.Vector3, isOfficer = false) {
     this.lastCrimePos.copy(pos);
     this.lastCrimeTime = performance.now();
-    this.addHeat(isOfficer ? 65 : 35);
+    this.addHeat(isOfficer ? 60 : 25);
   }
 
   public addHeat(amount: number) {
     this.heat = Math.min(100, this.heat + amount);
 
-    // Calculate stars
+    // Calculate 1 to 5 stars
     const previousStars = this.stars;
-    if (this.heat >= 85) {
+    if (this.heat >= 90) {
+      this.stars = 5;
+    } else if (this.heat >= 72) {
+      this.stars = 4;
+    } else if (this.heat >= 52) {
       this.stars = 3;
-    } else if (this.heat >= 50) {
+    } else if (this.heat >= 34) {
       this.stars = 2;
-    } else if (this.heat >= 20) {
+    } else if (this.heat >= 15) {
       this.stars = 1;
+    } else {
+      this.stars = 0;
     }
 
     if (this.stars > 0) {
@@ -120,7 +131,8 @@ export class WantedLevel {
     }
 
     // 2. State Machine: In sight vs Evading
-    const detectionRadius = this.stars === 3 ? 65 : this.stars === 2 ? 45 : 30;
+    const detectionRadii = [0, 32, 48, 65, 80, 100];
+    const detectionRadius = detectionRadii[this.stars] || 35;
 
     if (nearestPoliceDist < detectionRadius) {
       // In active sight / pursuit
@@ -132,14 +144,15 @@ export class WantedLevel {
       this.evasionTimer -= delta;
 
       // Slowly bleed heat
-      this.heat = Math.max(0, this.heat - delta * 4);
+      this.heat = Math.max(0, this.heat - delta * 3.5);
 
       if (this.evasionTimer <= 0) {
-        // Drop 1 star or clear
+        // Drop 1 star
         this.stars--;
         if (this.stars > 0) {
-          this.evasionTimer = 12;
-          this.heat = this.stars === 2 ? 60 : 30;
+          this.evasionTimer = 10;
+          const starHeats = [0, 20, 40, 60, 80, 95];
+          this.heat = starHeats[this.stars];
         } else {
           this.clearWanted();
         }
@@ -147,9 +160,10 @@ export class WantedLevel {
     }
 
     // 3. Dynamic Police Reinforcement Spawning
+    this.maxAllowedPoliceSpawns = this.stars >= 4 ? 12 : this.stars >= 2 ? 8 : 4;
     if (this.status === 'pursuit' && this.spawnCooldown <= 0 && this.activePoliceSpawns < this.maxAllowedPoliceSpawns) {
       this.spawnPoliceReinforcements(playerPos);
-      this.spawnCooldown = this.stars === 3 ? 12 : 18;
+      this.spawnCooldown = this.stars >= 4 ? 8 : this.stars >= 2 ? 12 : 16;
     }
   }
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, RotateCcw, Compass, Settings, Keyboard, ShieldAlert, CheckCircle2, Volume2, CloudRain, Sun, Monitor } from 'lucide-react';
+import { Play, RotateCcw, Compass, Settings, Keyboard, ShieldAlert, CheckCircle2, Volume2, CloudRain, Sun, Monitor, Scissors, Radio } from 'lucide-react';
 import { GameEngine } from '../engine/GameEngine';
 import { soundManager } from '../engine/SoundManager';
 import { WeatherType } from '../types/game';
@@ -8,9 +8,10 @@ interface MainMenuProps {
   onStartGame: () => void;
   hasSavedGame: boolean;
   engine: GameEngine | null;
+  onOpenCustomization?: () => void;
 }
 
-export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame, hasSavedGame, engine }) => {
+export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame, hasSavedGame, engine, onOpenCustomization }) => {
   const [tab, setTab] = useState<'main' | 'controls' | 'settings' | 'missions'>('main');
   const [volume, setVolume] = useState(80);
   const [selectedWeather, setSelectedWeather] = useState<WeatherType>('clear');
@@ -100,6 +101,21 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame, hasSavedGame, e
                 >
                   <RotateCcw className="w-4 h-4 text-sky-400" />
                   <span>START NEW GAME</span>
+                </button>
+              )}
+
+              {onOpenCustomization && (
+                <button
+                  onClick={onOpenCustomization}
+                  className="w-full py-3 px-5 bg-slate-800/80 hover:bg-slate-800 text-sky-300 border border-sky-500/30 hover:border-sky-400 font-semibold text-sm rounded-xl transition-colors flex items-center justify-between cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3">
+                    <Scissors className="w-4 h-4 text-sky-400" />
+                    <span>CHARACTER CREATOR / STYLIST</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-sky-400/80 group-hover:translate-x-0.5 transition-transform">
+                    CUSTOMIZE →
+                  </span>
                 </button>
               )}
 

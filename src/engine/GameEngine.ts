@@ -1,17 +1,34 @@
 import * as THREE from 'three';
-import { GameSaveData, WeatherType } from '../types/game';
+import { AlleyTagWallDef, CharacterCustomization, GameSaveData, WeatherType } from '../types/game';
 import { AudioController, audioController } from './AudioController';
 import { CombatController } from './CombatController';
 import { CombatManager } from './CombatManager';
+import { InteriorManager } from './InteriorManager';
 import { MissionManager } from './MissionManager';
 import { NPCManager } from './NPCManager';
+import { radioSystem, RadioSystem } from './RadioSystem';
 import { ShopManager } from './ShopManager';
 import { soundManager } from './SoundManager';
+import { StreetArtManager } from './StreetArtManager';
 import { VehicleManager } from './VehicleManager';
 import { WantedLevel } from './WantedLevel';
 import { WeatherSystem } from './WeatherSystem';
 import { WeaponInventory } from './WeaponInventory';
 import { WorldBuilder } from './WorldBuilder';
+
+export const DEFAULT_CHARACTER_CUSTOMIZATION: CharacterCustomization = {
+  hairstyle: 'short_fade',
+  hairColor: '#111111',
+  skinTone: '#d9a07a',
+  facialHair: 'stubble',
+  facialHairColor: '#111111',
+  eyewear: 'cyber_shades',
+  eyewearColor: '#00f0ff',
+  bodyType: 'balanced',
+  outfit: 'cyber_leather',
+  jacketColor: '#1e293b',
+  pantsColor: '#334155',
+};
 
 export class GameEngine {
   public canvas: HTMLCanvasElement;
@@ -31,6 +48,10 @@ export class GameEngine {
   public weatherSystem: WeatherSystem;
   public wantedLevelSystem: WantedLevel;
   public audioController: AudioController;
+  public interiorManager: InteriorManager;
+  public streetArtManager: StreetArtManager;
+  public radioSystem: RadioSystem = radioSystem;
+  public customization: CharacterCustomization = { ...DEFAULT_CHARACTER_CUSTOMIZATION };
 
   // Lighting & Day/Night
   public dirLight: THREE.DirectionalLight;
@@ -46,8 +67,11 @@ export class GameEngine {
   public playerVelocity: THREE.Vector3 = new THREE.Vector3();
   public playerHeading: number = 0;
   public isGrounded: boolean = true;
+  public isMoving: boolean = false;
   public isSprinting: boolean = false;
   public isCrouching: boolean = false;
+  public cameraSwayTimer: number = 0;
+  public cameraSwayOffset: THREE.Vector3 = new THREE.Vector3();
   public playerHealth: number = 100;
   public playerMoney: number = 500;
   public wantedLevel: number = 0;
@@ -83,6 +107,8 @@ export class GameEngine {
   // UI Event Callback
   public onStateUpdate?: () => void;
   public onToggleShop?: () => void;
+  public onToggleCustomization?: () => void;
+  public onOpenStreetArt?: (wall: AlleyTagWallDef) => void;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -145,6 +171,21 @@ export class GameEngine {
     this.audioController = audioController;
     this.audioController.init();
 
+    // Building Interiors
+    this.interiorManager = new InteriorManager(this.scene);
+    this.interiorManager.onOpenCustomization = () => {
+      if (this.onToggleCustomization) this.onToggleCustomization();
+    };
+    this.interiorManager.onOpenShop = () => {
+      if (this.onToggleShop) this.onToggleShop();
+    };
+
+    // Alley Street Art Manager
+    this.streetArtManager = new StreetArtManager(this.scene);
+    this.streetArtManager.onTagCompleted = (wall, reward) => {
+      this.playerMoney += reward;
+    };
+
     // 5. Build Player Character Rig
     const { group, torso, head, legs, arms } = this.createPlayerRig();
     this.playerMesh = group;
@@ -177,52 +218,181 @@ export class GameEngine {
     const group = new THREE.Group();
     group.position.copy(this.playerPos);
 
-    // Torso (AGAT protagonist cyber-leather jacket)
-    const torsoMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5, metalness: 0.3 });
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.75, 0.3), torsoMat);
+    const c = this.customization;
+    const bodyScale = c.bodyType === 'muscular' ? 1.18 : c.bodyType === 'slim' ? 0.88 : 1.0;
+    const armScale = c.bodyType === 'muscular' ? 1.25 : c.bodyType === 'slim' ? 0.85 : 1.0;
+
+    // Torso (outfit jacket / shirt)
+    const torsoMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(c.jacketColor),
+      roughness: c.outfit === 'cyber_leather' ? 0.4 : 0.7,
+      metalness: c.outfit === 'cyber_leather' ? 0.3 : 0.05,
+    });
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55 * bodyScale, 0.75, 0.3 * bodyScale), torsoMat);
     torso.position.y = 1.15;
     torso.castShadow = true;
     group.add(torso);
 
-    // Head
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xd9a07a, roughness: 0.8 });
+    // Head (skin tone)
+    const skinMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.skinTone), roughness: 0.75 });
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.35, 0.32), skinMat);
     head.position.y = 1.72;
     head.castShadow = true;
     group.add(head);
 
     // Hair
-    const hairMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
-    const hair = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.34), hairMat);
-    hair.position.y = 1.9;
-    group.add(hair);
+    const hairMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.hairColor), roughness: 0.5 });
+    if (c.hairstyle === 'short_fade') {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.34), hairMat);
+      h.position.y = 1.9;
+      group.add(h);
+    } else if (c.hairstyle === 'buzz') {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.08, 0.33), hairMat);
+      h.position.y = 1.88;
+      group.add(h);
+    } else if (c.hairstyle === 'mohawk') {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.32, 0.36), hairMat);
+      h.position.set(0, 1.98, 0.02);
+      group.add(h);
+    } else if (c.hairstyle === 'pompadour') {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.36), hairMat);
+      h.position.set(0, 1.94, -0.04);
+      group.add(h);
+    } else if (c.hairstyle === 'cyber_ponytail') {
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.34), hairMat);
+      cap.position.y = 1.9;
+      group.add(cap);
+
+      const pony = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.45, 12), hairMat);
+      pony.position.set(0, 1.75, -0.26);
+      pony.rotation.x = -Math.PI / 6;
+      group.add(pony);
+    } else if (c.hairstyle === 'afro') {
+      const h = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.32, 0.44), hairMat);
+      h.position.y = 1.95;
+      group.add(h);
+    } else if (c.hairstyle === 'long_wavy') {
+      const cap = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.16, 0.35), hairMat);
+      cap.position.y = 1.9;
+      group.add(cap);
+
+      const leftStrand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.18), hairMat);
+      leftStrand.position.set(-0.18, 1.62, 0.02);
+      group.add(leftStrand);
+
+      const rightStrand = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.45, 0.18), hairMat);
+      rightStrand.position.set(0.18, 1.62, 0.02);
+      group.add(rightStrand);
+    }
+
+    // Facial Hair
+    if (c.facialHair !== 'none') {
+      const beardMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(c.facialHairColor || c.hairColor),
+        roughness: 0.7,
+      });
+
+      if (c.facialHair === 'stubble') {
+        const stubble = new THREE.Mesh(new THREE.BoxGeometry(0.33, 0.14, 0.18), beardMat);
+        stubble.position.set(0, 1.6, 0.1);
+        group.add(stubble);
+      } else if (c.facialHair === 'goatee') {
+        const goatee = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.16), beardMat);
+        goatee.position.set(0, 1.58, 0.12);
+        group.add(goatee);
+      } else if (c.facialHair === 'full_beard') {
+        const beard = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.22), beardMat);
+        beard.position.set(0, 1.56, 0.1);
+        group.add(beard);
+      } else if (c.facialHair === 'moustache') {
+        const stache = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.06, 0.12), beardMat);
+        stache.position.set(0, 1.64, 0.14);
+        group.add(stache);
+      }
+    }
+
+    // Eyewear
+    if (c.eyewear !== 'none') {
+      if (c.eyewear === 'cyber_shades') {
+        const shadeMat = new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.1, metalness: 0.9 });
+        const shades = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.08, 0.12), shadeMat);
+        shades.position.set(0, 1.74, 0.14);
+        group.add(shades);
+      } else if (c.eyewear === 'hud_visor') {
+        const visorMat = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(c.eyewearColor || '#00f0ff'),
+          emissive: new THREE.Color(c.eyewearColor || '#00f0ff'),
+          emissiveIntensity: 0.7,
+          roughness: 0.1,
+        });
+        const visor = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.09, 0.14), visorMat);
+        visor.position.set(0, 1.74, 0.14);
+        group.add(visor);
+      } else if (c.eyewear === 'cyber_eye') {
+        const eyeMat = new THREE.MeshStandardMaterial({
+          color: 0x00f0ff,
+          emissive: 0x00f0ff,
+          emissiveIntensity: 0.9,
+        });
+        const eye = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.08, 12), eyeMat);
+        eye.rotation.x = Math.PI / 2;
+        eye.position.set(0.09, 1.74, 0.16);
+        group.add(eye);
+      }
+    }
 
     // Legs
-    const pantsMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
-    const legGeo = new THREE.BoxGeometry(0.2, 0.75, 0.22);
+    const pantsMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(c.pantsColor), roughness: 0.8 });
+    const legGeo = new THREE.BoxGeometry(0.2 * bodyScale, 0.75, 0.22 * bodyScale);
     const leftLeg = new THREE.Mesh(legGeo, pantsMat);
-    leftLeg.position.set(-0.14, 0.38, 0);
+    leftLeg.position.set(-0.14 * bodyScale, 0.38, 0);
     leftLeg.castShadow = true;
     group.add(leftLeg);
 
     const rightLeg = new THREE.Mesh(legGeo, pantsMat);
-    rightLeg.position.set(0.14, 0.38, 0);
+    rightLeg.position.set(0.14 * bodyScale, 0.38, 0);
     rightLeg.castShadow = true;
     group.add(rightLeg);
 
     // Arms
-    const armGeo = new THREE.BoxGeometry(0.16, 0.65, 0.18);
+    const armGeo = new THREE.BoxGeometry(0.16 * armScale, 0.65, 0.18 * armScale);
     const leftArm = new THREE.Mesh(armGeo, torsoMat);
-    leftArm.position.set(-0.35, 1.1, 0);
+    leftArm.position.set(-0.35 * bodyScale, 1.1, 0);
     leftArm.castShadow = true;
     group.add(leftArm);
 
     const rightArm = new THREE.Mesh(armGeo, torsoMat);
-    rightArm.position.set(0.35, 1.1, 0);
+    rightArm.position.set(0.35 * bodyScale, 1.1, 0);
     rightArm.castShadow = true;
     group.add(rightArm);
 
-    return { group, torso, head, legs: [leftLeg, rightLeg] as [THREE.Mesh, THREE.Mesh], arms: [leftArm, rightArm] as [THREE.Mesh, THREE.Mesh] };
+    return {
+      group,
+      torso,
+      head,
+      legs: [leftLeg, rightLeg] as [THREE.Mesh, THREE.Mesh],
+      arms: [leftArm, rightArm] as [THREE.Mesh, THREE.Mesh],
+    };
+  }
+
+  public updatePlayerCustomization(cust: CharacterCustomization) {
+    this.customization = { ...cust };
+    const oldVisible = this.playerMesh ? this.playerMesh.visible : true;
+    if (this.playerMesh) {
+      this.scene.remove(this.playerMesh);
+    }
+
+    const { group, torso, head, legs, arms } = this.createPlayerRig();
+    this.playerMesh = group;
+    this.playerTorso = torso;
+    this.playerHead = head;
+    this.playerLegs = legs;
+    this.playerArms = arms;
+
+    this.scene.add(this.playerMesh);
+    this.playerMesh.position.copy(this.playerPos);
+    this.playerMesh.rotation.y = this.playerHeading;
+    this.playerMesh.visible = oldVisible;
   }
 
   private initRainParticles() {
@@ -298,9 +468,13 @@ export class GameEngine {
         this.handleInteract();
       }
 
-      // Reload
+      // Reload on foot, or cycle Radio station in vehicle!
       if (e.code === 'KeyR' || e.key === 'r' || e.key === 'R') {
-        this.combatController.triggerReload();
+        if (this.vehicleManager.playerVehicle) {
+          this.radioSystem.cycleNextStation();
+        } else {
+          this.combatController.triggerReload();
+        }
       }
 
       // Weapon slots 1, 2, 3, 4, 5
@@ -385,9 +559,42 @@ export class GameEngine {
   }
 
   private handleInteract() {
+    // 1. Check building interior interaction or doorway transition first
+    const handledInterior = this.interiorManager.handleInteract(
+      this.playerPos,
+      (healAmt) => {
+        this.playerHealth = Math.min(100, this.playerHealth + healAmt);
+      },
+      (cashAmt) => {
+        this.playerMoney += cashAmt;
+      },
+      () => {
+        this.weaponInventory.weapons.forEach((w) => {
+          w.reserveAmmo = w.maxAmmo * 3;
+          w.currentAmmo = w.maxAmmo;
+        });
+      }
+    );
+    if (handledInterior) {
+      this.playerMesh.position.copy(this.playerPos);
+      return;
+    }
+
+    // Check nearest Alley Street Art Tag Wall
+    if (!this.interiorManager.currentInterior && !this.vehicleManager.playerVehicle) {
+      const nearTagWall = this.streetArtManager.update(this.playerPos, performance.now() * 0.001);
+      if (nearTagWall && !this.streetArtManager.isAnimatingSpray) {
+        if (this.onOpenStreetArt) {
+          this.onOpenStreetArt(nearTagWall);
+          return;
+        }
+      }
+    }
+
     if (this.vehicleManager.playerVehicle) {
       // Exit vehicle
       this.audioController.stopPlayerEngine();
+      this.radioSystem.setStation('off');
       const exitPos = this.vehicleManager.exitVehicle();
       this.playerPos.copy(exitPos);
       this.playerPos.y = 0;
@@ -401,6 +608,7 @@ export class GameEngine {
     if (nearestV) {
       this.vehicleManager.enterVehicle(nearestV);
       this.audioController.startPlayerEngine();
+      this.radioSystem.setStation('flash_pop');
       this.playerMesh.visible = false;
       this.wantedLevelSystem.recordVehicleTheft(this.playerPos, !!nearestV.def.isPolice);
       return;
@@ -429,6 +637,31 @@ export class GameEngine {
           }
         }
       }
+    }
+  }
+
+  public async applyStreetArtTag(wall: AlleyTagWallDef, dataUrl: string, sprayColor: string = '#00f0ff') {
+    // 1. Move player to stand position facing wall
+    this.playerPos.set(wall.standPos.x, 0, wall.standPos.z);
+    this.playerMesh.position.copy(this.playerPos);
+
+    // 2. Rotate player to face wall normal directly
+    const dx = wall.pos.x - wall.standPos.x;
+    const dz = wall.pos.z - wall.standPos.z;
+    this.playerHeading = Math.atan2(dx, dz);
+    this.playerMesh.rotation.y = this.playerHeading;
+
+    // 3. Play procedural 3D spray painting sequence with in-hand aerosol can, particles & audio
+    await this.streetArtManager.playTaggingSequence(
+      wall,
+      dataUrl,
+      this.playerMesh,
+      sprayColor
+    );
+
+    // 4. Subtle heat chance if witnessed in city
+    if (Math.random() < 0.2) {
+      this.wantedLevelSystem.recordAssault(this.playerPos, false);
     }
   }
 
@@ -520,14 +753,8 @@ export class GameEngine {
   }
 
   public addCrime(amount: number) {
-    this.wantedTimer = 25; // 25 seconds of pursuit
-    if (this.wantedLevel === 0 && amount >= 0.5) {
-      this.wantedLevel = 1;
-    } else if (this.wantedLevel === 1 && amount >= 1.0) {
-      this.wantedLevel = 2;
-    } else if (this.wantedLevel === 2 && amount >= 2.0) {
-      this.wantedLevel = 3;
-    }
+    this.wantedLevelSystem.addHeat(amount * 25);
+    this.wantedLevel = this.wantedLevelSystem.getStars();
   }
 
   private setupWindowResize() {
@@ -647,7 +874,8 @@ export class GameEngine {
     // Dynamic weather sound scaling
     this.audioController.updateWeatherAudio(this.weather, this.weatherSystem.wetness);
 
-    // 6. Mission Check & Rewards
+    // 6. Mission Update & Rewards
+    this.missionManager.update(delta);
     this.missionManager.checkPlayerProgress(
       { x: this.playerPos.x, y: this.playerPos.y, z: this.playerPos.z },
       this.wantedLevel,
@@ -660,9 +888,11 @@ export class GameEngine {
     // 7. World Pickups Animation
     this.worldBuilder.updatePickups(delta);
 
-    // 8. Wanted Threat System Update
+    // 8. Wanted Threat System Update & Interior Check
     this.wantedLevelSystem.update(delta, this.playerPos);
     this.wantedLevel = this.wantedLevelSystem.getStars();
+    this.interiorManager.update(this.playerPos);
+    this.streetArtManager.update(this.playerPos, currentTime * 0.001);
 
     // 8. Rain Particles Animation
     if (this.rainParticles && this.rainParticles.visible) {
@@ -710,7 +940,8 @@ export class GameEngine {
     if (this.isCrouching) speed = 2.6 * speedBonus;
     if (this.combatController.isAiming) speed = 3.4 * speedBonus; // Aim walk speed
 
-    const isMoving = forwardInput !== 0 || rightInput !== 0;
+    this.isMoving = forwardInput !== 0 || rightInput !== 0;
+    const isMoving = this.isMoving;
 
     // Camera planar vectors (Yaw 0 = looking towards -Z)
     const camForward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
@@ -806,13 +1037,14 @@ export class GameEngine {
   }
 
   private updateDriving(_delta: number) {
+    this.isMoving = false;
     if (!this.vehicleManager.playerVehicle) return;
     const v = this.vehicleManager.playerVehicle;
     this.playerPos.copy(v.mesh.position);
     this.playerPos.y = 0.5;
   }
 
-  private updateCamera(_delta: number) {
+  private updateCamera(delta: number) {
     if (this.vehicleManager.playerVehicle) {
       // Vehicle Chase Camera
       const v = this.vehicleManager.playerVehicle;
@@ -829,20 +1061,44 @@ export class GameEngine {
       this.camera.position.lerp(targetCamPos, 0.15);
       this.camera.lookAt(v.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0)));
     } else {
-      // Third Person Character Camera with smooth Aim Zoom
+      // Third Person Character Camera with smooth Aim Zoom & Procedural Sway
       const targetPos = this.playerPos.clone().add(new THREE.Vector3(0, 1.4, 0));
 
       const aimT = this.combatController.aimTransition;
       const curDist = THREE.MathUtils.lerp(this.cameraDistance, 2.2, aimT);
 
+      // --- Procedural Camera Sway Logic ---
+      // Sway frequency and amplitude scale with movement state (walking vs sprinting)
+      if (this.isMoving && this.isGrounded && aimT < 0.85) {
+        const swayFrequency = this.isSprinting ? 12.0 : 7.2;
+        this.cameraSwayTimer += delta * swayFrequency;
+
+        // Subtle side-to-side (horizontal) and bobbing (vertical) displacement
+        const swayAmpX = this.isSprinting ? 0.075 : 0.035;
+        const swayAmpY = this.isSprinting ? 0.055 : 0.025;
+        const targetSwayX = Math.sin(this.cameraSwayTimer) * swayAmpX;
+        const targetSwayY = Math.abs(Math.sin(this.cameraSwayTimer * 0.5)) * swayAmpY;
+
+        // Smoothly blend in camera sway
+        this.cameraSwayOffset.x = THREE.MathUtils.lerp(this.cameraSwayOffset.x, targetSwayX, 0.15);
+        this.cameraSwayOffset.y = THREE.MathUtils.lerp(this.cameraSwayOffset.y, targetSwayY, 0.15);
+      } else {
+        // Return smoothly to rest/idle position
+        this.cameraSwayOffset.lerp(new THREE.Vector3(0, 0, 0), 0.12);
+      }
+
+      // Convert local sway (horizontal perpendicular to camera view) to world space
+      const swayWorldRight = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw))
+        .multiplyScalar(this.cameraSwayOffset.x);
+
       const offsetX = Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch) * curDist;
-      const offsetY = Math.sin(this.cameraPitch) * curDist;
+      const offsetY = Math.sin(this.cameraPitch) * curDist + this.cameraSwayOffset.y;
       const offsetZ = Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch) * curDist;
 
       const desiredPos = new THREE.Vector3(
-        targetPos.x + offsetX,
+        targetPos.x + offsetX + swayWorldRight.x,
         targetPos.y + offsetY,
-        targetPos.z + offsetZ
+        targetPos.z + offsetZ + swayWorldRight.z
       );
 
       // Over the shoulder aim offset
@@ -856,7 +1112,11 @@ export class GameEngine {
       }
 
       this.camera.position.lerp(desiredPos, 0.28);
-      this.camera.lookAt(targetPos);
+
+      // Also subtly apply sway to the camera look target for organic head-bob sensation
+      const lookTarget = targetPos.clone().addScaledVector(swayWorldRight, 0.45);
+      lookTarget.y += this.cameraSwayOffset.y * 0.35;
+      this.camera.lookAt(lookTarget);
     }
   }
 
@@ -922,11 +1182,13 @@ export class GameEngine {
           weapons: this.weaponInventory.weapons,
           wantedLevel: this.wantedLevel,
           skills: Array.from(this.shopManager.unlockedSkills.keys()),
+          customization: this.customization,
         },
         timeOfDay: this.timeOfDay,
         weather: this.weather,
         completedMissionIds: Array.from(this.missionManager.completedMissionIds),
         activeMissionId: this.missionManager.activeMission ? this.missionManager.activeMission.id : null,
+        savedStreetArt: this.streetArtManager.getAllSavedTags(),
         timestamp: Date.now(),
       };
       localStorage.setItem('agat_save_data', JSON.stringify(data));
@@ -959,6 +1221,14 @@ export class GameEngine {
       if (data.player.weapons && data.player.weapons.length > 0) {
         this.weaponInventory.weapons = data.player.weapons;
         this.weaponInventory.equippedIndex = data.player.equippedWeaponIndex;
+      }
+
+      if (data.player.customization) {
+        this.updatePlayerCustomization(data.player.customization);
+      }
+
+      if (data.savedStreetArt) {
+        this.streetArtManager.loadSavedTagsFromSaveData(data.savedStreetArt);
       }
 
       if (data.player.skills && Array.isArray(data.player.skills)) {

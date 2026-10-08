@@ -1,6 +1,8 @@
-import React, { useRef, useEffect } from 'react';
-import { X, Navigation, MapPin, Building, Shield, HeartPulse, Landmark, Home, Trees, Package } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { X, Navigation, MapPin, Building, Shield, HeartPulse, Landmark, Home, Trees, Package, Timer, Play, CheckCircle2, Crosshair, Gauge, Coffee, ShoppingBag, Scissors, SprayCan } from 'lucide-react';
 import { GameEngine } from '../engine/GameEngine';
+import { INTERIOR_LOCATIONS } from '../engine/InteriorManager';
+import { ALLEY_TAG_WALLS } from '../engine/StreetArtManager';
 
 interface MapModalProps {
   engine: GameEngine | null;
@@ -9,6 +11,7 @@ interface MapModalProps {
 
 export const MapModal: React.FC<MapModalProps> = ({ engine, onClose }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [activeTab, setActiveTab] = useState<'districts' | 'missions' | 'streetart'>('districts');
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -119,6 +122,43 @@ export const MapModal: React.FC<MapModalProps> = ({ engine, onClose }) => {
       ctx.fillStyle = '#ffffff';
       ctx.font = '11px sans-serif';
       ctx.fillText(loc.name, sx + 12, sy + 4);
+    });
+
+    // Interactive Building Interiors (Diner, Shop, Apartment, Barbershop)
+    INTERIOR_LOCATIONS.forEach((loc) => {
+      const ix = toScreenX(loc.exteriorPos.x);
+      const iy = toScreenY(loc.exteriorPos.z);
+
+      ctx.beginPath();
+      ctx.arc(ix, iy, 9, 0, Math.PI * 2);
+      ctx.fillStyle = loc.color;
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText(`★ ${loc.name}`, ix + 12, iy + 4);
+    });
+
+    // Alley Street Art Tag Spots
+    ALLEY_TAG_WALLS.forEach((tagWall) => {
+      const tx = toScreenX(tagWall.pos.x);
+      const ty = toScreenY(tagWall.pos.z);
+      const isTagged = engine.streetArtManager.savedTags.has(tagWall.id);
+
+      ctx.beginPath();
+      ctx.arc(tx, ty, 8, 0, Math.PI * 2);
+      ctx.fillStyle = isTagged ? '#ff007f' : '#00f0ff';
+      ctx.fill();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = isTagged ? '#f472b6' : '#38bdf8';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.fillText(`🎨 ${tagWall.name}`, tx + 11, ty + 3);
     });
 
     // Active Mission Objective Marker
@@ -256,35 +296,265 @@ export const MapModal: React.FC<MapModalProps> = ({ engine, onClose }) => {
           </div>
 
           {/* Sidebar Directory */}
-          <div className="w-72 border-l border-slate-800 bg-slate-900/90 p-4 overflow-y-auto flex flex-col gap-4">
-            <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Districts & Landmarks</h3>
-
-            <div className="space-y-2">
-              {engine?.worldBuilder.keyLocations.map((loc) => (
-                <div
-                  key={loc.id}
-                  onClick={() => {
-                    engine.setWaypoint(loc.x, loc.z);
-                    drawMap();
-                  }}
-                  className="p-2.5 rounded-lg border border-slate-800 hover:border-sky-500/50 bg-slate-950/50 hover:bg-slate-800/60 transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-2 font-medium text-xs text-white">
-                    {loc.type === 'safehouse' && <Home className="w-3.5 h-3.5 text-sky-400" />}
-                    {loc.type === 'bank' && <Landmark className="w-3.5 h-3.5 text-yellow-400" />}
-                    {loc.type === 'police' && <Shield className="w-3.5 h-3.5 text-blue-400" />}
-                    {loc.type === 'hospital' && <HeartPulse className="w-3.5 h-3.5 text-rose-400" />}
-                    {loc.type === 'warehouse' && <Package className="w-3.5 h-3.5 text-amber-400" />}
-                    {loc.type === 'dock' && <Building className="w-3.5 h-3.5 text-purple-400" />}
-                    {loc.type === 'park' && <Trees className="w-3.5 h-3.5 text-emerald-400" />}
-                    <span>{loc.name}</span>
-                  </div>
-                  <p className="text-[11px] text-slate-400 mt-1">{loc.description}</p>
-                </div>
-              ))}
+          <div className="w-80 border-l border-slate-800 bg-slate-900/90 p-4 overflow-y-auto flex flex-col gap-3">
+            {/* Tabs */}
+            <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+              <button
+                onClick={() => setActiveTab('districts')}
+                className={`py-1.5 text-[11px] font-semibold rounded-md transition-all cursor-pointer ${
+                  activeTab === 'districts'
+                    ? 'bg-sky-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Landmarks
+              </button>
+              <button
+                onClick={() => setActiveTab('missions')}
+                className={`py-1.5 text-[11px] font-semibold rounded-md transition-all cursor-pointer ${
+                  activeTab === 'missions'
+                    ? 'bg-amber-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Missions
+              </button>
+              <button
+                onClick={() => setActiveTab('streetart')}
+                className={`py-1.5 text-[11px] font-semibold rounded-md transition-all cursor-pointer flex items-center justify-center gap-1 ${
+                  activeTab === 'streetart'
+                    ? 'bg-fuchsia-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <SprayCan className="w-3 h-3" />
+                <span>Street Art</span>
+              </button>
             </div>
 
-            <div className="mt-auto pt-4 border-t border-slate-800 text-[11px] text-slate-400 space-y-1">
+            {activeTab === 'districts' ? (
+              <div className="space-y-3">
+                {/* Enterable Building Interiors */}
+                <div>
+                  <h3 className="text-[11px] font-semibold text-sky-400 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                    <span>★ Enterable Interiors</span>
+                  </h3>
+                  <div className="space-y-1.5">
+                    {INTERIOR_LOCATIONS.map((loc) => (
+                      <div
+                        key={loc.id}
+                        onClick={() => {
+                          engine?.setWaypoint(loc.exteriorPos.x, loc.exteriorPos.z);
+                          drawMap();
+                        }}
+                        className="p-2 rounded-lg border border-slate-800 hover:border-sky-400/60 bg-slate-950/70 hover:bg-slate-800/80 transition-all cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between text-xs font-semibold text-white">
+                          <div className="flex items-center gap-2">
+                            {loc.id === 'diner' && <Coffee className="w-3.5 h-3.5 text-amber-400" />}
+                            {loc.id === 'shop' && <ShoppingBag className="w-3.5 h-3.5 text-emerald-400" />}
+                            {loc.id === 'apartment' && <Home className="w-3.5 h-3.5 text-sky-400" />}
+                            {loc.id === 'barbershop' && <Scissors className="w-3.5 h-3.5 text-purple-400" />}
+                            <span>{loc.name}</span>
+                          </div>
+                          <span className="text-[9px] font-mono px-1 rounded bg-slate-800 text-sky-300">ENTERABLE</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{loc.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800">
+                  <h3 className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Districts & Landmarks</h3>
+                  <div className="space-y-1.5">
+                    {engine?.worldBuilder.keyLocations.map((loc) => (
+                      <div
+                        key={loc.id}
+                        onClick={() => {
+                          engine.setWaypoint(loc.x, loc.z);
+                          drawMap();
+                        }}
+                        className="p-2.5 rounded-lg border border-slate-800 hover:border-sky-500/50 bg-slate-950/50 hover:bg-slate-800/60 transition-all cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2 font-medium text-xs text-white">
+                          {loc.type === 'safehouse' && <Home className="w-3.5 h-3.5 text-sky-400" />}
+                          {loc.type === 'bank' && <Landmark className="w-3.5 h-3.5 text-yellow-400" />}
+                          {loc.type === 'police' && <Shield className="w-3.5 h-3.5 text-blue-400" />}
+                          {loc.type === 'hospital' && <HeartPulse className="w-3.5 h-3.5 text-rose-400" />}
+                          {loc.type === 'warehouse' && <Package className="w-3.5 h-3.5 text-amber-400" />}
+                          {loc.type === 'dock' && <Building className="w-3.5 h-3.5 text-purple-400" />}
+                          {loc.type === 'park' && <Trees className="w-3.5 h-3.5 text-emerald-400" />}
+                          <span>{loc.name}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-1">{loc.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : activeTab === 'missions' ? (
+              <div className="space-y-2.5">
+                <h3 className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Contracts & Trials</span>
+                  <span className="font-mono text-[10px] text-slate-400">
+                    {engine?.missionManager.completedMissionIds.size} / {engine?.missionManager.missions.length} Done
+                  </span>
+                </h3>
+
+                {engine?.missionManager.missions.map((m) => {
+                  const isCurrent = engine.missionManager.activeMission?.id === m.id;
+                  const isCompleted = engine.missionManager.completedMissionIds.has(m.id);
+
+                  return (
+                    <div
+                      key={m.id}
+                      className={`p-3 rounded-lg border transition-all ${
+                        isCurrent
+                          ? 'border-amber-500 bg-amber-950/20 shadow-md'
+                          : isCompleted
+                          ? 'border-emerald-800/60 bg-emerald-950/10 opacity-75'
+                          : 'border-slate-800 bg-slate-950/60 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1">
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            {m.type === 'Race' ? (
+                              <Gauge className="w-3.5 h-3.5 text-sky-400" />
+                            ) : m.type === 'Delivery' ? (
+                              <Package className="w-3.5 h-3.5 text-amber-400" />
+                            ) : m.type === 'Assault' ? (
+                              <Crosshair className="w-3.5 h-3.5 text-rose-400" />
+                            ) : (
+                              <Landmark className="w-3.5 h-3.5 text-yellow-400" />
+                            )}
+                            <h4 className="text-xs font-bold text-white">{m.title}</h4>
+                          </div>
+                          <span className="text-[10px] text-slate-400 block mt-0.5">{m.subtitle}</span>
+                        </div>
+
+                        <span className="text-xs font-mono font-bold text-emerald-400">
+                          +${m.reward}
+                        </span>
+                      </div>
+
+                      {/* Timed Mission Badge */}
+                      {m.timeLimit && (
+                        <div className="flex items-center gap-1 mt-1.5 text-[10px] font-mono text-amber-300 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40 w-fit">
+                          <Timer className="w-3 h-3 text-amber-400" />
+                          <span>Limit: {Math.floor(m.timeLimit / 60)}m {m.timeLimit % 60 ? `${m.timeLimit % 60}s` : ''}</span>
+                        </div>
+                      )}
+
+                      <p className="text-[11px] text-slate-300 mt-1.5 line-clamp-2 leading-relaxed">
+                        {m.briefing}
+                      </p>
+
+                      {/* Actions */}
+                      <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                        {isCompleted ? (
+                          <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> COMPLETED
+                          </span>
+                        ) : isCurrent ? (
+                          <div className="flex items-center justify-between w-full">
+                            <span className="text-[10px] font-bold text-amber-400 flex items-center gap-1 animate-pulse">
+                              <Play className="w-3 h-3 fill-amber-400" /> IN PROGRESS
+                            </span>
+                            {m.timeRemaining !== undefined && (
+                              <span className="text-[11px] font-mono font-bold text-amber-300">
+                                {Math.floor(m.timeRemaining / 60)}:{String(Math.floor(m.timeRemaining % 60)).padStart(2, '0')}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              engine.missionManager.startMission(m.id);
+                              drawMap();
+                            }}
+                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] rounded transition-colors cursor-pointer flex items-center gap-1"
+                          >
+                            <Play className="w-3 h-3 fill-slate-950" />
+                            <span>Start Mission</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Street Art Alley Walls Directory */
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[11px] font-semibold text-fuchsia-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <SprayCan className="w-3.5 h-3.5 text-fuchsia-400" />
+                    <span>Alley Street Art Walls</span>
+                  </h3>
+                  <span className="text-[10px] font-mono font-bold text-amber-300 bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
+                    {engine?.streetArtManager.getTaggedCount() || 0}/{ALLEY_TAG_WALLS.length} CLAIMED
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {ALLEY_TAG_WALLS.map((w) => {
+                    const isTagged = engine?.streetArtManager.savedTags.has(w.id);
+                    return (
+                      <div
+                        key={w.id}
+                        className={`p-2.5 rounded-lg border transition-all ${
+                          isTagged
+                            ? 'border-fuchsia-500/40 bg-fuchsia-950/20'
+                            : 'border-slate-800 bg-slate-950/70 hover:border-sky-500/50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                              <span>{w.name}</span>
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                              {w.district} · {w.wallType.toUpperCase()}
+                            </div>
+                          </div>
+
+                          <span
+                            className={`text-[9px] font-mono px-1.5 py-0.5 rounded font-bold ${
+                              isTagged
+                                ? 'bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30'
+                                : 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                            }`}
+                          >
+                            {isTagged ? 'CLAIMED' : `+$${w.reward}`}
+                          </span>
+                        </div>
+
+                        <p className="text-[10px] text-slate-300 mt-1 line-clamp-2">
+                          {w.description}
+                        </p>
+
+                        <div className="mt-2 flex items-center justify-between pt-1.5 border-t border-slate-800/80">
+                          <button
+                            onClick={() => {
+                              engine?.setWaypoint(w.standPos.x, w.standPos.z);
+                              drawMap();
+                            }}
+                            className="text-[10px] font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer"
+                          >
+                            <Navigation className="w-3 h-3" />
+                            <span>Navigate Here (GPS)</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-auto pt-3 border-t border-slate-800 text-[11px] text-slate-400 space-y-1">
               <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
                 <span>Player Position</span>
@@ -294,8 +564,12 @@ export const MapModal: React.FC<MapModalProps> = ({ engine, onClose }) => {
                 <span>Active Objective</span>
               </div>
               <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-fuchsia-400" />
+                <span>Alley Street Art Walls</span>
+              </div>
+              <div className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full bg-sky-400" />
-                <span>Custom Waypoint</span>
+                <span>Custom GPS Waypoint</span>
               </div>
             </div>
           </div>

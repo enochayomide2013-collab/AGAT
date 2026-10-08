@@ -6,6 +6,9 @@ import { PauseMenu } from './components/PauseMenu';
 import { MapModal } from './components/MapModal';
 import { ShopModal } from './components/ShopModal';
 import { GameOverModal } from './components/GameOverModal';
+import { CharacterCustomizationModal } from './components/CharacterCustomizationModal';
+import { StreetArtModal } from './components/StreetArtModal';
+import { AlleyTagWallDef } from './types/game';
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -14,6 +17,9 @@ export default function App() {
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [isMapOpen, setIsMapOpen] = useState<boolean>(false);
   const [isShopOpen, setIsShopOpen] = useState<boolean>(false);
+  const [isCustomizationOpen, setIsCustomizationOpen] = useState<boolean>(false);
+  const [isStreetArtOpen, setIsStreetArtOpen] = useState<boolean>(false);
+  const [activeTagWall, setActiveTagWall] = useState<AlleyTagWallDef | null>(null);
   const [isGameOver, setIsGameOver] = useState<boolean>(false);
   const [, setTick] = useState<number>(0);
 
@@ -37,6 +43,19 @@ export default function App() {
 
     game.onToggleShop = () => {
       setIsShopOpen((prev) => !prev);
+    };
+
+    game.onToggleCustomization = () => {
+      setIsCustomizationOpen(true);
+      game.isPaused = true;
+      game.keys = {};
+    };
+
+    game.onOpenStreetArt = (wall) => {
+      setActiveTagWall(wall);
+      setIsStreetArtOpen(true);
+      game.isPaused = true;
+      game.keys = {};
     };
 
     setEngine(game);
@@ -70,7 +89,19 @@ export default function App() {
           return next;
         });
       } else if (e.code === 'Escape') {
-        if (isShopOpen) {
+        if (isStreetArtOpen) {
+          setIsStreetArtOpen(false);
+          if (engine) {
+            engine.isPaused = false;
+            engine.keys = {};
+          }
+        } else if (isCustomizationOpen) {
+          setIsCustomizationOpen(false);
+          if (engine) {
+            engine.isPaused = false;
+            engine.keys = {};
+          }
+        } else if (isShopOpen) {
           setIsShopOpen(false);
           if (engine) {
             engine.isPaused = false;
@@ -97,7 +128,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKey);
     return () => window.removeEventListener('keydown', handleGlobalKey);
-  }, [isPlaying, isGameOver, isMapOpen, isShopOpen, engine]);
+  }, [isPlaying, isGameOver, isMapOpen, isShopOpen, isCustomizationOpen, isStreetArtOpen, engine]);
 
   const handleStartGame = () => {
     setIsPlaying(true);
@@ -177,6 +208,7 @@ export default function App() {
           onStartGame={handleStartGame}
           hasSavedGame={hasSavedData}
           engine={engine}
+          onOpenCustomization={() => setIsCustomizationOpen(true)}
         />
       )}
 
@@ -216,6 +248,44 @@ export default function App() {
             if (engine) {
               engine.isPaused = false;
               engine.keys = {};
+            }
+          }}
+        />
+      )}
+
+      {/* Character Stylist / Customization Modal */}
+      {isCustomizationOpen && (
+        <CharacterCustomizationModal
+          engine={engine}
+          isOpen={isCustomizationOpen}
+          onClose={() => {
+            setIsCustomizationOpen(false);
+            if (engine && isPlaying) {
+              engine.isPaused = false;
+              engine.keys = {};
+            }
+          }}
+        />
+      )}
+
+      {/* Alley Street Art & Tagging Studio Modal */}
+      {isStreetArtOpen && (
+        <StreetArtModal
+          wall={activeTagWall}
+          isOpen={isStreetArtOpen}
+          onClose={() => {
+            setIsStreetArtOpen(false);
+            if (engine && isPlaying) {
+              engine.isPaused = false;
+              engine.keys = {};
+            }
+          }}
+          onSprayTag={async (dataUrl, sprayColor) => {
+            setIsStreetArtOpen(false);
+            if (engine && activeTagWall) {
+              engine.isPaused = false;
+              engine.keys = {};
+              await engine.applyStreetArtTag(activeTagWall, dataUrl, sprayColor);
             }
           }}
         />

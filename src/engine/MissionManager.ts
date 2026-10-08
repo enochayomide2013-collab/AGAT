@@ -17,7 +17,9 @@ export class MissionManager {
         id: 'mission_1',
         title: 'THE FIRST RUN',
         subtitle: 'Urban Transit & Logistics',
-        briefing: 'Travel to the marked location at Industrial Warehouse 07, enter the marked area to secure the supply crate, and deliver it to Solis Corporate Tower downtown.',
+        type: 'Delivery',
+        timeLimit: 120, // 2 minutes to complete delivery run
+        briefing: 'Travel to the marked location at Industrial Warehouse 07, enter the marked area to secure the supply crate, and deliver it to Solis Corporate Tower downtown before the delivery window closes.',
         reward: 500,
         currentStepIndex: 0,
         status: 'available',
@@ -52,8 +54,10 @@ export class MissionManager {
       {
         id: 'mission_2',
         title: 'HIGHWAY VELOCITY',
-        subtitle: 'Time Trial Run',
-        briefing: 'Test the Vortex GT sport vehicle by racing through high-speed radar checkpoints along the AGAT boulevard ring.',
+        subtitle: 'Time Trial Sprint',
+        type: 'Race',
+        timeLimit: 90, // 90 seconds speed trial
+        briefing: 'Test the Vortex GT sport vehicle by racing through high-speed radar checkpoints along the AGAT boulevard ring before the timer expires.',
         reward: 950,
         currentStepIndex: 0,
         status: 'available',
@@ -89,6 +93,7 @@ export class MissionManager {
         id: 'mission_3',
         title: 'SYNDICATE SHOWDOWN',
         subtitle: 'Port Security Infiltration',
+        type: 'Assault',
         briefing: 'Hostile syndicate operatives have barricaded the southern shipping container yard. Neutralize hostile units and secure the district.',
         reward: 1600,
         currentStepIndex: 0,
@@ -125,6 +130,8 @@ export class MissionManager {
         id: 'mission_4',
         title: 'CENTRAL AGAT HEIST',
         subtitle: 'High-Stakes Infiltration',
+        type: 'Heist',
+        timeLimit: 150, // 2.5 minutes heist window
         briefing: 'Infiltrate Central AGAT Bank downtown, extract the digital reserve cipher, and shake off any law enforcement pursuit back to the safehouse.',
         reward: 3800,
         currentStepIndex: 0,
@@ -164,10 +171,16 @@ export class MissionManager {
     const m = this.missions.find((x) => x.id === missionId);
     if (!m || m.status === 'completed') return false;
 
-    // Reset steps
+    // Reset steps & timers
     m.currentStepIndex = 0;
     m.steps.forEach((s) => (s.completed = false));
     m.status = 'active';
+    m.elapsedTime = 0;
+    if (m.timeLimit) {
+      m.timeRemaining = m.timeLimit;
+    } else {
+      m.timeRemaining = undefined;
+    }
     this.activeMission = m;
 
     soundManager.playUIClick();
@@ -184,12 +197,29 @@ export class MissionManager {
     return { mission: this.activeMission, step };
   }
 
+  public update(delta: number) {
+    if (!this.activeMission || this.activeMission.status !== 'active') return;
+
+    // Increment elapsed time
+    this.activeMission.elapsedTime = (this.activeMission.elapsedTime || 0) + delta;
+
+    // Countdown if mission has a time limit
+    if (this.activeMission.timeLimit !== undefined && this.activeMission.timeRemaining !== undefined) {
+      this.activeMission.timeRemaining = Math.max(0, this.activeMission.timeRemaining - delta);
+
+      // Check if time expired
+      if (this.activeMission.timeRemaining <= 0) {
+        this.failActiveMission('TIME EXPIRED');
+      }
+    }
+  }
+
   public checkPlayerProgress(
     playerPos: Vector3D,
     wantedLevel: number,
     onReward: (amount: number) => void
   ) {
-    if (!this.activeMission) return;
+    if (!this.activeMission || this.activeMission.status !== 'active') return;
     const current = this.getCurrentStep();
     if (!current) return;
 
@@ -242,6 +272,18 @@ export class MissionManager {
       soundManager.playUIClick();
       if (this.onMissionStateChange) {
         this.onMissionStateChange(mission, 'step_completed');
+      }
+    }
+  }
+
+  public failActiveMission(reason: string = 'MISSION FAILED') {
+    if (this.activeMission) {
+      const m = this.activeMission;
+      m.status = 'failed';
+      this.activeMission = null;
+      soundManager.playMissionFailed();
+      if (this.onMissionStateChange) {
+        this.onMissionStateChange(m, 'failed');
       }
     }
   }
